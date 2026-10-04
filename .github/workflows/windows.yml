@@ -16,7 +16,7 @@ jobs:
       - name: Native maintenance regression fixture
         run: python tests/run_checks.py
       - name: Install optional development-only analyzer
-        run: python -m pip install --only-binary=:all: --no-deps capstone==5.0.7
+        run: "python -m pip install --only-binary=:all: --no-deps capstone==5.0.7"
       - name: Static instruction-analysis regressions
         run: python tests/test_primitives.py StaticAuditTests
       - uses: actions/upload-artifact@v4
