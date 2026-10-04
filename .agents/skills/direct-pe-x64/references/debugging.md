@@ -12,7 +12,7 @@ Reproduce the reported failure through its actual entry/adapter path in an isola
 | One path is skipped or stale | Branch targets, named insertion policy, initialization and state transitions |
 | Patch corrupts a working path | Revision hashes, ABI/data changes, field/end rebasing and affected callers |
 
-Loader status is a clue, not a unique diagnosis. Use imports --resolve when exports changed. Use context for the failing function and only necessary contracts/dependencies; a whole image dump is rarely the shortest route to an answer.
+Loader status is a clue, not a unique diagnosis. Use imports --resolve when exports changed. Use direct byte inspection or get/context for the failing function and only necessary contracts/dependencies; a whole image dump is rarely the shortest route to an answer.
 
 verify checks recorded structural invariants. Optional audit checks actual decoded instructions against references and boundaries. Neither proves intended behavior. If uncertain, examine the selected body with an allowed static analyzer/debugger; do not substitute a compiler/assembler implementation.
 
@@ -28,6 +28,6 @@ A focused diagnostic mode or bounded trace can log a failing boundary's input, s
 
 ## Finish one candidate
 
-Fix bytes and metadata together, review the targeted diff, verify and rerun the failing regression. Broaden to relevant callers/adapters and required acceptance checks once the path works. Repeat passed checks only when new edits, failures or unresolved concerns justify them.
+Fix bytes and keep affected indexing/contracts consistent using the chosen direct or managed workflow, review the targeted diff, verify and rerun the failing regression. Broaden to relevant callers/adapters and required acceptance checks once the path works. Repeat passed checks only when new edits, failures or unresolved concerns justify them.
 
 Keep failed logs for diagnosis and successful evidence associated with the candidate hash. Preserve user state and a running image. Deliver a verified new artifact or state the concrete unresolved failure; do not claim a metadata hash proves native semantics.

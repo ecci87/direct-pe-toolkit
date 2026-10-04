@@ -1,13 +1,15 @@
-# Direct PE application workflow
+# Direct PE application work
 
-Build Windows x64 executable behavior from explicit machine-code bytes and PE records. Do not introduce a compiler, assembler, transpiled implementation, downloaded runtime code or static libraries. Scripts may pack bytes, resolve fields and run checks. Documented Windows DLL imports are the runtime platform. Static machine-code analyzers/disassemblers are permitted development tools.
+Application behavior lives in explicit Windows x64 instruction bytes. Do not introduce a compiler, assembler, transpiled application, downloaded runtime code or static libraries. Packing scripts and static analyzers are allowed.
 
-Read [.agents/skills/direct-pe-x64/SKILL.md](.agents/skills/direct-pe-x64/SKILL.md), then only the reference needed for the operation. Its scripts are canonical; tools/pe_workbench.py is a thin entry point.
+The EXE is the artifact being edited. Agents may always inspect or modify it directly using their own byte scripts, a binary editor or other suitable tools. The Python frontend is optional: it provides names, descriptions, addresses, code, contracts, declared calls and managed patching. Its limitations do not prohibit another correct binary-editing approach.
 
-For edits, obtain the directory once and use context for the target function plus necessary contracts. Keep unrelated bodies and whole-file dumps outside model context. Embedded module documents describe the current revision. Preserve public entries and contracts; use patch-template and patch for existing functions. Additions or layout/ABI/import changes require an explicit migration.
+Read [.agents/skills/direct-pe-x64/SKILL.md](.agents/skills/direct-pe-x64/SKILL.md). Keep embedded descriptions short: a brief architecture, one purpose per function, essential ABI/data contracts and declared call relationships. Generate lengths, addresses, hashes and fixup bookkeeping mechanically. Keep tutorials, history and test transcripts outside the EXE.
 
-For new applications, get one real input-to-output path working before expanding modules or reserves. Keep platform adapters separate from core operations, with explicit arguments and owned/borrowed resources. Choose diagnostic/test dispatch suitable for the application's host; a service, adapter or file processor need not have a console UI. The scaffold only exits.
+For a local change, retrieve only the affected functions and necessary contracts. Optional commands are overview, graph EXE NAME, get EXE NAME --bytes, and get EXE NAME --fixups when editing address fields. Preserve working adapters during unrelated changes. Reuse verified complete functions or literal byte fragments with fixed registers, patchable fields and known frame contracts.
 
-Before a fix, reproduce the reported failure through the actual path involved. Run structural and focused native checks while iterating, then the required broader checks once the candidate works. Pure tests cannot establish adapter behavior. Log expected/actual results and meaningful failure status; avoid rebuilding unchanged modules or repeating passed checks without a reason.
+Direct edits must leave executable addresses, branches, imports and unwind information correct. If managed metadata should remain usable, refresh affected records; sync can do this for same-slot edits with accurate fixup declarations. It does not infer new semantics. A tool-required migration is a constraint of that helper, not a requirement to use it.
 
-Deliver a new verified candidate, preserve user data/live processes and retain rollback artifacts. Report actual tests and limitations. Follow [the fast workflow](.agents/skills/direct-pe-x64/references/fast-workflow.md) for byte budgets, reuse, migrations and small edit packets.
+Use a bounded work directory under out/work. Retain current reproduction inputs, one useful rollback and compact evidence; successful tests clean their owned temporary files. Do not accumulate numbered candidate folders or duplicate whole-image dumps.
+
+Run focused structural/native checks during iteration. Finalize semantic contracts before required broad checks. Cosmetic descriptions need structural/description checks; code, interfaces, data layout, imports or host changes need their relevant behavioral checks. Preserve user data and live applications, and report which artifact and behavior were actually verified.

@@ -13,6 +13,8 @@ import subprocess
 import sys
 import unittest
 import uuid
+import shutil
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT/".agents/skills/direct-pe-x64/scripts/pe_workbench.py"
@@ -30,8 +32,9 @@ spec = importlib.util.spec_from_file_location("wb", SCRIPT)
 wb = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(wb)
 raw = wb._raw
-OUT = ROOT/"out"/("primitives-"+uuid.uuid4().hex[:12])
-OUT.mkdir(parents=True)
+WORK = ROOT/"out"/"work"
+WORK.mkdir(parents=True,exist_ok=True)
+OUT = Path(tempfile.mkdtemp(prefix="primitives-",dir=WORK))
 def silent(call, *args, **kwargs):
     with contextlib.redirect_stdout(io.StringIO()):
         return call(*args, **kwargs)
@@ -178,6 +181,125 @@ class GeneratedFixtureTests(unittest.TestCase):
                                     creationflags=subprocess.CREATE_NO_WINDOW)
             self.assertEqual(result.returncode, status)
 
+
+class ConciseToolkitTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.exe=OUT/"concise.exe"
+        silent(wb.new_image,cls.exe,["KERNEL32.dll:ExitProcess"])
+
+    def test_concise_storage_and_legacy_reading(self):
+        with wb.PE(self.exe) as pe:
+            r=pe.record("Entry");brief=pe.brief(r);full=pe.document(r)
+            self.assertTrue(r["flags"]&wb._meta.FLAG)
+            self.assertNotIn("references",brief);self.assertNotIn("implementation",brief)
+            self.assertIn("references",full)
+            self.assertEqual(brief["imports"],["ExitProcess"])
+            self.assertLess(r["doc_size"],1000)
+        with wb.PE(ROOT/"examples/starfall/architecture/Starfall-v2.exe") as pe:
+            self.assertEqual(pe.document(pe.record("Move"))["name"],"Move")
+            self.assertEqual(pe.brief(pe.record("Move"))["calls"],[])
+
+    def test_compact_is_deterministic_and_preserves_every_body(self):
+        copy=OUT/"compacted.exe"
+        silent(wb.compact_image,self.exe,copy)
+        self.assertEqual(wb.stream_hash(copy),wb.stream_hash(self.exe))
+        with wb.PE(copy) as a,wb.PE(self.exe) as b:
+            for r in a.records:
+                self.assertEqual(r["entry"],b.record(r["name"])["entry"])
+                if r["kind"]==1:self.assertEqual(a.code(r),b.code(b.record(r["name"])))
+
+    def test_named_get_has_correct_address_and_only_selected_bytes(self):
+        result=silent(wb.get_view,self.exe,"Entry",True)
+        with wb.PE(self.exe) as pe:
+            r=pe.record("Entry")
+            self.assertEqual(result["address"]["file_offset"],pe.offset(r["impl"]))
+            self.assertEqual(bytes.fromhex(result["code_hex"]),pe.code(r))
+        self.assertTrue(result["code_hash_matches"]);self.assertNotIn("edit_records",result)
+
+    def test_overview_and_declared_graph(self):
+        fixture=ROOT/"examples/starfall/Starfall.exe"
+        view=silent(wb.overview_view,fixture)
+        self.assertEqual(len(view["functions"]),45)
+        self.assertFalse(any("code_hex" in f for f in view["functions"]))
+        graph=silent(wb.graph_view,fixture,"MeteorHit")
+        self.assertIn(["ProjectileStep","MeteorHit"],graph["edges"])
+        self.assertNotIn(["Tick","PickupCollect"],graph["edges"])
+        self.assertIn("indirect",graph["scope"])
+
+    def test_budget_failure_and_output_protection(self):
+        output=OUT/"small-view.json"
+        with self.assertRaises(ValueError):silent(wb.get_view,self.exe,"Entry",True,output=output,max_bytes=1)
+        self.assertFalse(output.exists())
+        output.write_text("keep")
+        with self.assertRaises(ValueError):silent(wb.overview_view,self.exe,output=output)
+        self.assertEqual(output.read_text(),"keep")
+
+    def test_contract_addresses_distinguish_file_bytes_and_virtual_storage(self):
+        view=silent(wb.get_view,self.exe,"Data.AppContext")
+        with wb.PE(self.exe) as pe:
+            self.assertEqual(view["address"]["data_rva"],0x15000)
+            self.assertEqual(view["address"]["file_offset"],pe.offset(0x15000))
+        view=silent(wb.get_view,ROOT/"examples/starfall/Starfall.exe","Data.Upgrades")
+        self.assertEqual(view["address"]["data_rva"],0x18500)
+        self.assertIsNone(view["address"]["file_offset"])
+
+    def test_reported_metadata_space_accounts_for_technical_tail(self):
+        with wb.PE(self.exe) as pe:
+            r=pe.record("Entry");d=pe.document(r);free=wb.metadata_free(r)
+        self.assertLess(free,r["doc_capacity"]-r["doc_size"]-1)
+        exact=copy.deepcopy(d);exact["purpose"]+="x"*free
+        wb._meta.pack(exact,r)
+        exact["purpose"]+="x"
+        with self.assertRaisesRegex(ValueError,"slot exhausted"):wb._meta.pack(exact,r)
+
+    def test_technical_corruption_is_detected(self):
+        corrupted=OUT/"technical-corruption.exe";shutil.copyfile(self.exe,corrupted)
+        with wb.PE(corrupted) as pe:at=pe.offset(pe.record("Entry")["technical_rva"])+wb._meta.HEADER
+        data=bytearray(corrupted.read_bytes());data[at]^=1;corrupted.write_bytes(data)
+        with self.assertRaisesRegex(ValueError,"hash mismatch"):silent(wb.verify,corrupted)
+
+    def test_fixed_profiles_rebase_whole_instruction_fields(self):
+        body=raw.ByteBlock().relative("ff15","iat.ExitProcess",kind="import")
+        framed=body.framed("stack56");manifest=framed.manifest()
+        self.assertEqual(manifest["references"][0]["offset"],6)
+        self.assertEqual(manifest["references"][0]["next_offset"],10)
+        self.assertEqual(bytes(framed.code[:4]),bytes.fromhex("4883ec38"))
+        self.assertEqual(bytes(framed.code[-5:]),bytes.fromhex("4883c438c3"))
+        module=raw.function_module("Operation",raw.ByteBlock().emit("31c0"),entry_rva=0x1b000,
+            slot_bytes=256,profile="leaf",inputs={},returns="EAX=0",contracts=[],purpose="Return zero.")
+        self.assertEqual(module["code_hex"],"31c0c3")
+        self.assertEqual(module["document"]["implementation"]["used_bytes"],3)
+
+    @unittest.skipUnless(os.name=="nt","Windows native execution")
+    def test_direct_byte_edit_and_sync_changes_actual_exit_status(self):
+        edited=OUT/"direct-edit.exe";shutil.copyfile(self.exe,edited)
+        with wb.PE(edited) as pe:
+            r=pe.record("Entry");doc=pe.document(r);symbols=pe.document(pe.record("Symbols"))["symbols"]
+            body=raw.ByteBlock().emit("b92a000000").relative("ff15","iat.ExitProcess",kind="import")
+            block=body.framed("stack56");doc=block.update_document(doc)
+            code=wb.patch_references(doc,bytes(block.code),symbols,r["impl"])
+            offset=pe.offset(r["impl"])
+        data=bytearray(edited.read_bytes());data[offset:offset+len(code)]=code;edited.write_bytes(data)
+        got=silent(wb.get_view,edited,"Entry",True,raw=True)
+        self.assertFalse(got["code_hash_matches"])
+        rejected=OUT/"bad-sync.exe"
+        with self.assertRaises(ValueError):silent(wb.sync_image,edited,"Entry",rejected,len(code))
+        self.assertFalse(rejected.exists());self.assertFalse(Path(str(rejected)+".building").exists())
+        manifest=OUT/"direct-edit.manifest.json";manifest.write_bytes(wb.canonical(doc))
+        output=OUT/"synchronized.exe";silent(wb.sync_image,edited,"Entry",output,len(code),manifest)
+        result=subprocess.run([str(output)],capture_output=True,timeout=10,creationflags=subprocess.CREATE_NO_WINDOW)
+        self.assertEqual(result.returncode,42)
+        with wb.PE(output) as pe:self.assertEqual(pe.code(pe.record("Entry")),code)
+
+    def test_stale_technical_revision_rejects_patch(self):
+        template=OUT/"technical-revision.patch.json";silent(wb.template,self.exe,"Entry",template)
+        patch=json.loads(template.read_text());patch["expected_technical_sha256"]="00"*32
+        template.write_bytes(wb.canonical(patch))
+        output=OUT/"stale-technical.exe"
+        with self.assertRaisesRegex(ValueError,"technical records"):silent(wb.patch,self.exe,template,output)
+        self.assertFalse(output.exists())
+
 class FakeFunctionPE:
     def __init__(self, block, mutate=None):
         manifest = block.manifest()
@@ -224,4 +346,12 @@ class StaticAuditTests(unittest.TestCase):
         self.assertEqual(result["unreachable_instruction_offsets"], [5])
 
 if __name__=="__main__":
-    unittest.main()
+    program=unittest.main(exit=False)
+    evidence=ROOT/"out"/"evidence";evidence.mkdir(parents=True,exist_ok=True)
+    (evidence/("audit.json" if rest==["StaticAuditTests"] else "primitives.json")).write_text(json.dumps(dict(tests=program.result.testsRun,
+        failures=len(program.result.failures),errors=len(program.result.errors),skipped=len(program.result.skipped)),indent=2)+"\n")
+    if program.result.wasSuccessful():
+        # Only this process-owned temp path, resolved beneath the intended workspace.
+        if OUT.resolve().parent!=WORK.resolve() or not OUT.resolve().is_relative_to((ROOT/"out").absolute()) or OUT.is_symlink():raise RuntimeError("Unsafe test workspace")
+        shutil.rmtree(OUT)
+    raise SystemExit(0 if program.result.wasSuccessful() else 1)

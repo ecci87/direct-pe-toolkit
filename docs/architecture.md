@@ -1,27 +1,15 @@
-# Architecture for selective direct-byte edits
+# Named direct-byte executable editing
 
-Application behavior is stored in explicit instruction bytes. The workbench packs PE structures and declared references; it does not compile or choose opcodes. Ordinary Windows DLL APIs are the platform boundary. Development-only static analyzers can check encoded instructions independently.
+The executable is the editable artifact. Names, a brief architecture, function purposes/ABIs, data contracts and declared calls provide navigation. Application behavior remains explicit x64 bytes. The optional Python frontend retrieves these descriptions and addresses, extracts one function and can write managed patches; direct binary scripts/editors remain fully permitted.
 
-## Independent modules
+Readable embedded metadata is concise JSON. Fixups, labels, symbol maps and unwind bookkeeping live in independently bounded compressed technical records. The frontend expands those only for an operation that needs them. Common platform rules and repeated history do not belong in every readable description.
 
-An executable directory indexes function bodies, data contracts, architecture and stable symbols. Each function has a padded slot, public entry, implementation range, code/document/ABI hashes, local labels, fixups and an ABI document. Data contracts declare bounds, ownership, field types/units, mutation and error behavior.
+overview retrieves names/purposes and contracts without code bodies. graph retrieves declared incoming/outgoing direct calls. get retrieves a named function or contract, with optional bytes/fixups. inspect/context retain expanded compatibility views. get --raw and sync support same-slot direct edits with stale code indexing; sync does not infer or rewrite new instruction fields.
 
-New module interfaces should pass explicit bounded arguments. A size/version header is useful for evolving contexts; separate contexts and storage contracts when ownership differs. The exact application decides host entry, callbacks, concurrency and resource lifecycle. There is no required event loop, console, board, timer or persistence format.
+Stable public entries and independent slot reserves permit local updates. Relocation, imports, data layouts and callbacks still need their real PE/ABI consequences handled correctly. A restriction of the managed helper is not a prohibition on another binary-editing workflow.
 
-Windows x64 volatile/nonvolatile register rules, stack alignment and unwind layout apply regardless of application. The current helper supports leaf and stack56 frames. More complex prologues require explicit encoder/verifier extensions, not an undocumented workaround.
+raw_bytes.py supplies literal frame profiles, explicit byte blocks, field rebasing and import packing. It selects no instructions from high-level application logic. Reuse complete verified operations where possible. Native tests and platform acceptance remain necessary; static decoding cannot establish intended behavior.
 
-## Stable edits
+Use one bounded scratch workspace, preserve current reproduction inputs and compact evidence, and avoid historical dumps/candidates in deliverable folders. The application determines its host, concurrency and diagnostics; no sample game's architecture is imposed.
 
-Callers target stable public entries; bodies can relocate behind jump gates when a slot fills. Same-slot edits rewrite only the affected body/document/record and necessary unwind metadata. The patch report identifies declared callers without placing unrelated bodies into model context.
-
-Routine patches preserve contract version and public ABI. Function/import additions, data changes and unsupported profiles are explicit migrations. Reserves remain finite; read the current image's capacities rather than importing the example's layout assumptions.
-
-## Context and tooling
-
-inspect reads the compact directory or one named module. context returns one body plus necessary documents, with compact JSON, revision hashes and a byte budget. It does not load all function bodies or fabricate an absent caller index. Whole-file hashes, structural checks and checkpoint snapshots run outside model context.
-
-raw_bytes.py centralizes declared field ends, local-label rebasing, explicit insertion policy and import packing. It accepts literal bytes and symbolic addresses, not a high-level application or assembly language. The static audit adapter independently decodes a selected body and compares it with those declarations.
-
-Small machine code does not by itself imply low token use: hex is larger than raw bytes and semantic information must be retained. Independent contracts and retrieval boundaries make small edits efficient. Keep descriptions local, preserve evidence and avoid oversized universal contexts/reserves.
-
-See [fast workflow](../.agents/skills/direct-pe-x64/references/fast-workflow.md), [byte tools](../.agents/skills/direct-pe-x64/references/byte-tools.md) and [module protocol](../.agents/skills/direct-pe-x64/references/module-protocol.md).
+See [module protocol](../.agents/skills/direct-pe-x64/references/module-protocol.md), [fast workflow](../.agents/skills/direct-pe-x64/references/fast-workflow.md) and [byte helpers](../.agents/skills/direct-pe-x64/references/byte-tools.md).

@@ -90,6 +90,29 @@ def validate_fixups(code, references, labels):
             if ref["target"] not in labels or labels[ref["target"]] != local:
                 raise ValueError("Local target disagrees with its named label: " + ref["target"])
 
+FUNCTION_PROFILES = {
+    "leaf": dict(prefix="", suffix="c3", unwind_hex="01000000", scratch_offsets=[]),
+    "stack56": dict(prefix="4883ec38", suffix="4883c438c3", unwind_hex="0104010004620000",
+                    scratch_offsets=[32,40,48]),
+}
+
+def function_module(name,body,*,entry_rva,slot_bytes,profile,inputs,returns,contracts,purpose,tests=()):
+    """Wrap explicitly chosen bytes in one fixed verified frame and derive bookkeeping."""
+    if profile not in FUNCTION_PROFILES:raise ValueError("Unsupported fixed function profile")
+    block=body.framed(profile)
+    manifest=block.manifest()
+    if len(block.code)>slot_bytes:raise ValueError("Function body exceeds its slot")
+    refs=manifest["references"]
+    abi=dict(platform="Windows x64",inputs=inputs,returns=returns,caller_shadow_bytes=32,
+        nonvolatile_preserved=["RBX","RBP","RSI","RDI","R12","R13","R14","R15","XMM6..XMM15"],
+        clobbers="Win64 volatile registers and flags.",memory_contracts=list(contracts))
+    document=dict(schema="llm-pe.module.v1",name=name,contract_version=1,purpose=purpose,abi=abi,
+        implementation=dict(entry_rva=entry_rva,implementation_rva=entry_rva,used_bytes=len(block.code),
+            slot_bytes=slot_bytes,section=".mods",unwind_profile=profile,
+            unwind_hex=FUNCTION_PROFILES[profile]["unwind_hex"],gate=None),
+        references=refs,local_symbols=manifest["local_symbols"],tests=list(tests))
+    return dict(name=name,kind=1,capacity=4096,code_hex=manifest["code_hex"],document=document)
+
 class ByteBlock:
     """Raw hex, named labels and rel32 fields only; no mnemonic assembler."""
     def __init__(self):
@@ -123,6 +146,17 @@ class ByteBlock:
         self.references.append(dict(offset=offset, next_offset=len(self.code), target=target,
                                     local=None, kind=kind, rva=0))
         return self
+
+    def framed(self, profile):
+        """Literal profile bytes only; fixed registers, no instruction selection."""
+        if profile not in FUNCTION_PROFILES:raise ValueError("Unsupported fixed function profile")
+        data=FUNCTION_PROFILES[profile];result=ByteBlock().emit(data["prefix"])
+        base=len(result.code);manifest=dict(references=copy.deepcopy(self.references),local_symbols=dict(self.labels))
+        result.code.extend(self.code)
+        result.references=[dict(r,offset=r["offset"]+base,next_offset=r["next_offset"]+base,
+            local=r["local"]+base if r["local"] is not None else None) for r in manifest["references"]]
+        result.labels={name:offset+base for name,offset in self.labels.items()}
+        result.emit(data["suffix"]);return result
 
     def manifest(self):
         references = copy.deepcopy(self.references)

@@ -1,7 +1,7 @@
-Read AGENTS.md, the direct-pe-x64 skill and its debugging reference.
+Read AGENTS.md and the direct-pe-x64 skill.
 
-Investigate [EXE path] for [minimal reproduction, observed result, expected result]. Reproduce through the actual failing entry/adapter path using an isolated fixture. Distinguish loader, core operation, platform/host adapter and reference-layout failures before editing.
+Diagnose [observable failure] in [EXE]. Reproduce it through the actual host/adapter path. Inspect the smallest affected bodies/contracts using direct byte tools or optional overview, graph and get views. Static analyzers may help verify instruction fields.
 
-Load only the failing function and necessary contracts/dependencies. Use import resolution and optional static analysis where relevant. Add a meaningful regression that reaches the production path; do not treat simulated state, a metadata pass or an exit-only scaffold as proof.
+Preserve working adapters during unrelated fixes. Write explicit byte changes and maintain actual branches, addresses, imports and unwind. Managed patching is optional; direct edits may use sync for same-slot metadata repair with accurate declarations.
 
-Make the smallest explicit-byte fix, preserving ABI/public entries unless a deliberate migration is necessary. Verify and run the focused regression, then required broader checks. Deliver the cause, corrected artifact/hash and actual evidence.
+Keep descriptions concise, derive bookkeeping automatically and retain only useful failure evidence. Verify the focused regression, then required broader checks after finalizing the candidate. Report expected/actual behavior and the tested artifact.

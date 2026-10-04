@@ -1,76 +1,63 @@
-# LLMPE64 module protocol, version 1
+# LLMPE64 indexed executable protocol
 
-Read this for selective inspection, ABI-preserving patches and explicit migrations. All integers below are little-endian. Addresses in records are RVAs. The tool is the executable specification; these capacities describe its current tested profile.
+The frontend is optional. Direct binary inspection/editing remains permitted. This protocol makes named retrieval and managed editing convenient; it is not a required implementation language or a security signature.
 
-## Directory and bounded reads
+## Storage
 
-The read-only .llm section begins with a 512-byte header. A 192-byte record per module gives a name, typed kind, contract version, public entry, current body, reserved capacity and independent code/document/ABI digests. The reader loads PE headers, the small directory and requested document/body ranges. It does not place other bodies into model context. A streaming whole-file digest is separate from selective-read statistics.
+A read-only, non-executable .llm section holds a 512-byte header and up to 128 independently indexed 192-byte records. Records carry names, kinds, public/body RVAs, code length/capacity, document location/capacity, hashes and generation. RVAs are image-relative; the frontend also returns file offsets and the preferred image base.
 
-Header:
-| Offset | Representation | Meaning |
-| --- | --- | --- |
-| 0 | 8 bytes | LLMPE64 followed by NUL |
-| 8 | uint16 pair | schema major 1, minor 0 |
-| 12 | eight uint32 | header size 512, record size 192, directory capacity 128, used count, directory offset 512, document arena offset, used arena end, arena capacity |
-| 48 | 16 bytes | deterministic image identity |
-| 64 | uint32 pair | image build generation, schema flags |
-| 72 | 32 bytes | origin image SHA-256 |
-| 128 | NUL-terminated ASCII | unknown-module diagnostic |
+Header major 1 remains supported. Minor 0 stores legacy expanded JSON. Minor 1 supports concise descriptions and separate optional mechanical records:
 
-Module record:
-| Offset | Representation | Meaning |
-| --- | --- | --- |
-| 0 | 64 bytes | ASCII name, NUL padded |
-| 64 | uint32 | CRC32 of name; checked for collisions |
-| 68 | uint16 pair | kind, contract version |
-| 72 | seven uint32 | entry RVA, body RVA, used code bytes, body slot bytes, document RVA, document length, document capacity |
-| 100 | 32 bytes | SHA-256 of used body bytes |
-| 132 | 32 bytes | SHA-256 of document bytes excluding NUL |
-| 164 | 16 bytes | first 16 bytes of canonical ABI SHA-256 |
-| 180 | uint32 triple | flags, module generation, reserved |
+| Position | Meaning |
+| --- | --- |
+| Header 8/10 | uint16 major/minor |
+| Header 12..40 | eight uint32: header size, record width, capacity/count, directory/arena offsets, arena end/capacity |
+| Record 0..63 | ASCII name |
+| Record 64/68/70 | name CRC32, uint16 kind/version |
+| Record 72..96 | seven uint32: entry/body RVA, used/slot bytes, document RVA/length/whole-slot capacity |
+| Record 100..179 | code SHA-256, description SHA-256, truncated ABI digest |
+| Record 180/184/188 | flags, generation, technical-record RVA |
 
-Kinds: function=1, data contract=2, architecture=3, stable symbols=4. Name restrictions are checked by the tool. Document slots contain canonical llm-pe.module.v1 JSON plus NUL and zero reserve. .llm is not executable or writable. These are development manifests, not a security trust boundary or a signature.
+Kinds are function=1, data=2, architecture=3, symbols=4. Flag bit 0 enables concise storage. A record's technical pointer is zero or points inside its own metadata slot after the readable JSON/NUL. The 48-byte technical header is LLMFX64 plus NUL, packed length, decoded length and packed SHA-256; a bounded zlib-compressed JSON payload follows. It stores fixups/labels, implementation/unwind records, full ABI defaults or the symbol map. It stores no change history or test transcript. Compression is a tooling/storage feature, not a runtime application dependency.
 
-Function documents describe purpose, ABI, implementation/unwind, dependencies, typed memory contracts, test coverage, local_symbols and references. Each reference records offset, next_offset, target symbol, resolved RVA, optional local body offset and kind. Symbols supplies stable external RVAs; local branch targets move with their body.
+The readable description stays ordinary compact UTF-8 JSON, schema llm-pe.module.v1. Functions have one purpose, essential arguments/result/contracts, a frame profile and unique declared calls/imports. Data contracts retain field types, offsets, sizes, units and bounds; meaningful fields are never silently truncated. Architecture stays brief. Native --describe implementations that print the indexed JSON keep working without decoding the technical records.
 
-Data contracts describe size, fields with offsets/types/units, ownership, read/write constraints and invariants. For new APIs, include a size/version header and pass a context pointer. Document existing fixed globals without changing legacy accesses during an unrelated edit.
+PE.brief reads only a description. PE.document expands the mechanical records for compatibility with editing/verification. ABI digests use the expanded contract. Technical checksums and consistency checks detect stale/corrupt records. The format does not prove semantic accuracy or authenticate code.
 
-## Commands
-
-Run the skill's scripts/pe_workbench.py directly, or tools/pe_workbench.py from the toolkit root:
+## Optional views
 
 ```text
-inspect image.exe
-inspect image.exe Move --bytes
-inspect image.exe Data.State
-patch-template image.exe Move --output move.patch.json
-patch image.exe move.patch.json --output candidate.exe
-diff image.exe candidate.exe
-verify candidate.exe
-export image.exe checkpoint-directory
-build checkpoint-directory --output rebuilt.exe
+overview App.exe
+graph App.exe
+graph App.exe ProcessRecord
+get App.exe ProcessRecord --bytes
+get App.exe Data.Context
+get App.exe ProcessRecord --bytes --fixups
 ```
 
-inspect emits only the selected document/revision/body, or a compact module directory. Its storage fields expose document size/capacity/free bytes and code reserve; patch-template repeats capacity limits. Budget expanded documentation against canonical JSON length plus the NUL before patching. An application implementing native --describe MODULE can print that same embedded JSON. Bare --describe prints Architecture; unknown names return exit 2. Generic scaffolds do not yet implement this native command.
+Views return compact JSON with a default 32768-byte output budget; --output writes a new file. overview reads descriptions and directory entries, not function bodies. graph reports declared direct calls, with imports separately; indirect/dynamic calls are not inferred. get returns one description, addresses and revision, optionally its used bytes and expanded edit records.
 
-Patch JSON has schema llm-pe.patch.v1, module, expected_code_sha256, expected_document_sha256, contract_version, reason, hex and documentation. Start from a fresh patch-template. If instructions move, update local_symbols and every affected reference offset/next_offset/local target. The patcher resolves listed displacements and updates their rva fields. It rejects stale revisions, changed public ABI/contract versions and unsupported frame profiles.
+inspect and context remain expanded compatibility views. --raw with get --bytes reads an edited body despite a stale code hash and reports whether the hash matches. Address/length indexing still must be valid. Raw unannotated EXEs have no names to retrieve; normal PE/binary tools can edit them.
 
-Candidate creation copies the image and rewrites only the target slot, its document/record and necessary unwind/header fields. It verifies before finalizing output and never patches the source in place. Review the sidecar patch-report: changed byte ranges, preserved entry, current body, declared direct callers, relocation status and candidate hash. native_tests_run is false: the tool does not infer or fabricate test execution.
+## Editing
 
-## Growth and migrations
+Managed patch-template/patch uses revision hashes, ABI checks, declared fixups and the supported leaf/stack56 unwind profiles. It writes a new candidate and preserves other bodies. Concise descriptions need not change after a code-only patch; technical revisions are checked separately. Metadata capacity covers the whole per-module slot, including its technical tail.
 
-Use --relocate only after reviewing a body that exceeds its reserved slot. The tool appends a 1024-aligned body in .mods and writes E9 rel32 at the existing public entry. Local branches and external relative references are recomputed. The body gets its own unwind range; the entry gate gets leaf unwind. Other function bodies/call sites retain their bytes and public target RVAs.
+Direct edits can use any suitable method. Keep actual instruction fields, PE directories, stable call targets and unwind records consistent. For same-slot edits:
 
-Later relocations retain retired bodies and their unwind records. This avoids reusing old ranges while the profile remains append-only. Growth is finite. The schema has 128 directory records and the current helper has 48 unwind entries. Read each image's section headers and Architecture.reserve_profile for actual code/document capacities. Per-module document capacities are independent. Exhaustion fails explicitly.
+```text
+get edited.exe ProcessRecord --bytes --raw
+sync edited.exe ProcessRecord --used-bytes 123 --manifest full-module.json --output candidate.exe
+```
 
-The current helper does not provide a universal add-module/import/data-layout migration. The migrate command handles a raw, unannotated base plus a reviewed specification, appending .mods/.llm; it is not a routine way to remigrate an already annotated image. Adapt the raw generator/layout for structural changes, version contracts, rebuild the candidate and verify all dependent accesses/callers. See the reference migration.json for explicit function bytes and contracts.
+The manifest is optional when existing declarations still apply. sync preserves bytes as edited; it never silently resolves/rewrites their displacements. Changed instruction positions/references require accurate declarations. It refreshes lengths, hashes, padding and unwind range, then verifies. Structural/interface changes beyond this helper remain possible through a correct direct edit or explicit layout migration.
 
-The new command builds an exit-only raw base and annotates it. Its context header and Entry reserve are scaffolding; complete applications require their own module/layout generation, native diagnostics and tests.
+Relocation through patch --relocate appends a body behind its stable public jump gate. Finite code, document and unwind reserves can be exhausted. Helper restrictions do not prohibit other editing approaches.
 
-## Checkpoint semantics and assurance limits
+## Repacking and reproduction
 
-export produces layout.json, raw section .bin snapshots, readable module .json documents and used function .bin bodies. build reconstructs the same bytes and rejects edited views that disagree with raw sections. This is lossless archival/reproducibility, not a second source of truth that silently repairs edited files. Apply reviewed patches first and export a fresh checkpoint afterwards.
+compact EXE --output NEW repacks the final .llm section while retaining every function/data RVA and byte. It requires no overlay/certificate and leaves all other sections intact apart from PE size fields. Specifications with metadata.format=concise-v1 select this storage during migrate; legacy specifications keep legacy byte-identical packing. new uses concise storage by default and remains EXIT-ONLY.
 
-verify checks the tested PE profile, section bounds/permissions, document/code/ABI hashes, declared fixup values, slot padding, import structures, stable gates and supported unwind ranges. context provides a bounded edit packet; imports --resolve validates actual exports on Windows; optional audit checks decoded instructions against declarations. See byte-tools.md for their scope. It does not decode arbitrary instructions, prove register preservation, enforce memory effects, verify behavior or authenticate the binary. Behavioral assertions and byte review remain necessary.
+export/build provides lossless raw checkpoints. Edited human views that disagree with snapshots are rejected by build. migrate handles a raw base plus explicit bytes/layout declarations; neither helper is a compiler or general linker.
 
-Future extensions should version the protocol: indexed call/data dependency queries, more unwind encodings, migration tools for new modules/imports, richer context contracts and an optional x64 decoder used only for verification. Keep those optional; the current repository has no downloaded runtime dependencies.
+verify checks the supported structural profile, hashes, fixups, padding, imports and unwind. Optional audit independently decodes selected instructions. Neither proves register/memory behavior or application acceptance; run the relevant native path.

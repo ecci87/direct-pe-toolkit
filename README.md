@@ -1,63 +1,58 @@
 # Direct PE Toolkit
 
-Build and maintain Windows x64 executables directly from explicit machine-code bytes and PE structures. The workflow removes the source-to-machine-code compile/assemble step. Python tooling packs already chosen bytes, resolves addresses and maintains independently indexed module contracts. Delivered applications use documented Windows DLL imports; no downloaded runtime code or static libraries are required.
+Build and edit Windows x64 executables directly from explicit machine-code bytes. Python helpers pack PE records and retrieve named information; no compiler, assembler, downloaded runtime code or static libraries are required.
 
-The repository is application-neutral: process tools, file processors, services, adapters and interactive applications use the same bounded module workflow. Entry, callbacks, I/O and test hosting follow the application actually requested. [AGENTS.md](AGENTS.md) and the portable [direct-pe-x64 skill](.agents/skills/direct-pe-x64/SKILL.md) steer compatible agents; [discovery adapters](docs/agent-compatibility.md) support Codex, Copilot, Claude and explicit-read clients.
+**The EXE can always be edited directly.** Use your own byte scripts/editor or the optional frontend. The toolkit's managed-patch restrictions do not prohibit another correct binary-editing workflow.
 
-## Work on a small context
+## Retrieve only what is needed
 
-Use Python 3.10+ with the standard library. Windows x64 is required for native execution.
-
-```text
-python tools/pe_workbench.py inspect PATH.exe
-python tools/pe_workbench.py context PATH.exe Function --output out/function.context.json
-python tools/pe_workbench.py context PATH.exe Function --include Data.Required
-python tools/pe_workbench.py patch-template PATH.exe Function --output out/change.patch.json
-python tools/pe_workbench.py patch PATH.exe out/change.patch.json --output out/candidate.exe
-python tools/pe_workbench.py diff PATH.exe out/candidate.exe
-```
-
-context includes the selected function body/document, revision hashes, capacities and direct data contracts. Explicit --include adds only a needed document; other function bodies stay out. Compact output has an exact UTF-8 byte count and a default 32 KiB budget. --no-contracts or --max-bytes lets you choose the scope deliberately; oversized packets fail instead of silently omitting essential data.
-
-In the checked-in fixture, one 77-byte function and its direct contract produce a 5666-byte JSON packet; the EXE is 747520 bytes. This demonstrates selective context, not a tokenizer benchmark or guaranteed speedup. Hex expands binary data, semantic contracts still matter, and documentation/padding can dominate file size.
-
-## Catch packing errors early
-
-[raw_bytes.py](.agents/skills/direct-pe-x64/scripts/raw_bytes.py) provides byte blocks, named labels, relative field declarations and import packing. It supplies no mnemonic assembler or application implementation. Named insertion requires choosing whether existing branches enter or skip a new hook. Field overlaps, conflicting labels and stale local targets are rejected.
+Python 3.10+ and the standard library are sufficient. Native checks require Windows x64.
 
 ```text
-python tools/pe_workbench.py imports PATH.exe
-python tools/pe_workbench.py imports PATH.exe --resolve
-python tools/pe_workbench.py verify out/candidate.exe
+python tools/pe_workbench.py overview App.exe
+python tools/pe_workbench.py graph App.exe ProcessRecord
+python tools/pe_workbench.py get App.exe ProcessRecord --bytes
+python tools/pe_workbench.py get App.exe Data.Context
+python tools/pe_workbench.py get App.exe ProcessRecord --bytes --fixups
 ```
 
-The import packer emits hint/name records, terminators, aligned ILT/IAT arrays and directories. --resolve checks real system exports on Windows before application launch. Neither validates API argument semantics.
+overview returns brief architecture, function names/purposes/addresses and contracts, without function bodies. graph returns declared direct incoming/outgoing calls; indirect/dynamic calls are not inferred. get retrieves one name, its description, addresses and optional code/fixups. Views are compact JSON with a default 32 KiB output budget and optional --output.
 
-Static analyzers/disassemblers are permitted. The optional audit adapter uses Capstone 5.x in the development environment:
+The current sample's entire overview is 9101 bytes; one 77-byte function with description and code is 1026 bytes. That function view omits contracts and technical fixups until requested. These are measured bytes, not a tokenizer or productivity benchmark.
+
+## Concise embedded descriptions
+
+Embed a brief architecture, one purpose per function, essential ABI/data contracts and declared calls. Keep tutorials, change history and test transcripts outside the EXE. The agent writes semantics; tools derive addresses, lengths, dependencies, hashes and reserves.
+
+Concise storage keeps readable JSON separate from independently bounded compressed edit records for fixups, labels, symbol maps and unwind. The helper expands those records only when needed. Legacy expanded images remain readable.
+
+The sample's readable metadata fell from 418361 to 36184 bytes; its EXE fell from 878592 to 235520 bytes. Every function body/public address was preserved. The smaller image still includes reserved slots, an index and mechanical records.
 
 ```text
-python tools/pe_workbench.py audit PATH.exe Function --analyzer-path PATH_TO_CAPSTONE
+python tools/pe_workbench.py compact App.exe --output out/work/task/compact.exe
 ```
 
-It decodes only that body, checks actual relative fields and instruction boundaries against the manifest, and reports unreachable offsets. --listing adds a local instruction/control-flow listing. Capstone is never installed automatically or linked into the EXE. Core packing, context and verification remain standard-library-only.
+new defaults to concise storage but supplies only an EXIT-ONLY scaffold. Migration specifications opt in with metadata.format=concise-v1; legacy specifications retain their original packing.
 
-## Get an application working
+## Edit by either workflow
 
-Choose [new-app](prompts/new-app.md), [update-module](prompts/update-module.md) or [debug](prompts/debug.md). The [fast workflow](.agents/skills/direct-pe-x64/references/fast-workflow.md) explains early end-to-end acceptance, bounded contracts, reuse and focused checks.
+Managed edits use patch-template/patch and optional relocation. Direct edits can use any suitable binary tooling. Same-slot indexing repair is available:
 
 ```text
-python tools/pe_workbench.py new --output out/App.exe --imports KERNEL32.dll:ExitProcess
+python tools/pe_workbench.py get edited.exe ProcessRecord --bytes --raw
+python tools/pe_workbench.py sync edited.exe ProcessRecord --used-bytes 123 --manifest module.json --output out/work/task/candidate.exe
+python tools/pe_workbench.py verify out/work/task/candidate.exe
 ```
 
-new creates an EXIT-ONLY annotated scaffold. It does not implement the requested application, test dispatch or self-description. Reuse the packers and adapt a reviewed raw layout for real modules, callbacks, imports and data. The helper is not a universal linker.
+--raw reports stale code hashes while returning the indexed body. sync preserves the bytes as edited and refreshes indexing; it does not infer/rewrite instruction fields. Supply an accurate expanded manifest if fields moved. Other layout/interface changes can use a correct direct edit or an explicit migration.
 
-Existing functions can be patched within independent reserves. --relocate moves an oversized body behind its stable public entry. New functions/imports, changed data/ABI, unsupported frames and exhausted reserves need explicit migrations. [Architecture](docs/architecture.md) and [module protocol](.agents/skills/direct-pe-x64/references/module-protocol.md) document these boundaries.
+[raw_bytes.py](.agents/skills/direct-pe-x64/scripts/raw_bytes.py) supplies literal frame profiles, byte blocks, named field rebasing and import packing. It does not translate application logic or choose instruction encodings. Optional audit uses a development-only Capstone 5.x installation.
 
-export/build provides byte-identical checkpoints; migrate constructs an annotated image from a reviewed raw base/specification. They do not silently reinterpret edited raw snapshots.
+## Workflow and validation
 
-## Validate behavior and deliver
+[AGENTS.md](AGENTS.md), the [skill](.agents/skills/direct-pe-x64/SKILL.md), [prompts](prompts/update-module.md) and [client adapters](docs/agent-compatibility.md) support application-neutral work in Codex, Copilot, Claude and explicit-read clients.
 
-Reproduce a defect through its actual failing adapter/entry path. Deterministic core tests can miss an adapter that never supplies the expected input. Run focused native checks while iterating, then required broader acceptance checks once the candidate works. Preserve user files/live processes and retain a rollback artifact.
+Reuse verified operations, keep one out/work workspace, finalize semantic contracts before broad checks and retain current reproduction inputs plus compact evidence. Successful test runs clean their owned temporary files and retain out/evidence JSON reports.
 
 ```text
 python tests/test_primitives.py
@@ -65,10 +60,6 @@ python tests/test_primitives.py --analyzer-path PATH_TO_CAPSTONE
 python tests/run_checks.py
 ```
 
-The first suite checks generic byte/import/context primitives, native hook routing and optional static-analysis failures. The second is the supplied example's full maintenance regression harness. CI runs standard-library checks and native checks, then separately installs an optional pinned analyzer to validate its adapter. [Evidence](docs/validation.md) states what was actually tested.
+[Validation evidence](docs/validation.md) records actual checks. The [Starfall example](examples/starfall/README.md) supplies a native fixture; its gameplay/input solution is not a requirement for another application. The repository declares no distribution license.
 
-The [Starfall example](examples/starfall/README.md) is a working native fixture with embedded diagnostics and reproducible packing inputs. Its gameplay, input solution and failure history stay under examples/starfall; they are not architecture requirements for another application.
-
-Repository map: .agents/skills/direct-pe-x64 contains the canonical skill/tools; root instruction files route agents there; prompts supplies portable requests; docs covers the protocol/workflow; examples holds application-specific artifacts; tests supplies reusable-tool and fixture checks. Generated output and personal data are ignored. No distribution license is currently declared.
-
-Source repository: [ecci87/direct-pe-toolkit](https://github.com/ecci87/direct-pe-toolkit).
+Source: [ecci87/direct-pe-toolkit](https://github.com/ecci87/direct-pe-toolkit).

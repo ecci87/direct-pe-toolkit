@@ -1,39 +1,17 @@
-# Fast direct-byte workflow
+# Efficient direct-byte work
 
-## A new application
+Start with one observable input-to-output acceptance case and the actual host contract. A service callback, file transformation or adapter needs its own real path. Get that path working before expanding modules.
 
-Define the smallest observable acceptance case: what reaches the process/module, what state changes, what is returned/written, and how failure is reported. Choose the required host contract before encoding entry/callback bytes. A normal process exit does not validate a service-manager callback, protocol adapter or file transformation.
+Choose how to edit the EXE. Direct byte scripts/editors are permitted. Optional frontend views provide an overview, declared incoming/outgoing calls, names, RVAs/file offsets and only the selected body/contract. Load technical fixups only for a change that needs them; avoid whole-image hex or unrelated bodies in model context.
 
-Reuse the raw-byte/import packers and known-good byte fragments under documented ABIs. Verify imported export names early with imports --resolve on Windows. Get one real input-to-output operation working, then add behavior in bounded function slots. Do not copy a sample application's state layout or event loop into an unrelated application.
+Reuse complete verified functions first, then fixed-register literal fragments. raw_bytes.py supplies leaf/stack56 frames, relative-field packing and import packing. A fragment should declare its inputs, outputs, clobbers, bounds, patchable fields and evidence. Helpers must not select instructions from arbitrary high-level application logic. A shared native test runner with data cases can reduce repeated setup/assertion bytes when actual repetition justifies it; there is no mandatory universal runner.
 
-Keep core operations and platform adapters distinct. New interfaces should state pointer bounds, field types/units, ownership, mutations, errors and register arguments/results. A versioned context header helps when modules share evolving state; do not impose one giant global context. Reserve realistic headroom per module and measure it before growth.
+The agent writes semantics once: purpose, ABI, bounds, ownership, mutations and errors. Tools derive byte lengths, addresses, hashes, symbol locations and dependencies. Keep descriptions concise and local. Reuse a common profile; do not append migration history to every function or bump ABI versions for implementation-only changes.
 
-Implement native test dispatch and diagnostics appropriate to the application. --test, --smoke and --describe are useful conventions, not a requirement for an interactive console or installation of a live service. A separate test/diagnostic entry path may exercise the same function slots in a safe host. Document which modes actually exist.
+Managed patching preserves indexed interfaces. Direct edits can change any executable part when the corresponding PE/ABI/address consequences are handled correctly. sync is a same-slot metadata repair helper, not a requirement or general linker. Preserve working platform adapters during unrelated changes.
 
-## An existing application
+Use out/work/TASK for scratch output, one current candidate and minimal evidence. Successful repository tests remove their process-owned temporary directories and retain out/evidence reports. Keep current reproduction inputs and a useful rollback, using Git for historical versions. Delete only identified generated artifacts.
 
-1. Read the directory once with inspect. Obtain context EXE MODULE, including direct contracts; use --include NAME for a necessary caller/callee document.
-2. Decide the change class before encoding: ordinary patch, slot relocation, or explicit migration. Preserve existing working platform adapters during unrelated core changes.
-3. State one observable regression, encode the smallest bounded change and let tools rebase named fields/labels. Write a new candidate.
-4. Run structural verification and the focused regression. Use optional static audit when control flow, relative fields or instruction boundaries changed.
-5. Once that path works, run the required broader native/integration checks, review diff and promote the verified artifact.
+Run structural checks and a focused regression while iterating. Finalize contracts before the required broader checks. Reuse behavioral evidence only when code, relevant data, addresses, imports and host assumptions are unchanged and identify that equivalence explicitly. A description-only change normally needs integrity/self-description checks rather than another complete native suite.
 
-Use patch-template for revision hashes and exact capacities. Relocate only when an existing body outgrows its slot. New functions, imports, data/ABI changes, unsupported stack frames or exhausted reserves require a documented migration. Separate the structural change from behavioral diagnosis; do not redesign the entire application to fix one path.
-
-The helper is a packer/maintainer, not a general linker. A migration may still require adapting the raw layout. Reuse the packing primitives rather than rewriting import terminators, alignment and displacement arithmetic.
-
-## A small edit packet
-
-Keep the request, target document/body, direct contracts, expected/actual reproduction, current revision and relevant validation commands together. Add dependencies only when the target's ABI or observed failure requires them. Preserve module-local labels, fixups and external symbol names; callers use public entries.
-
-context defaults to a 32768-byte compact JSON budget. --no-contracts can omit automatic contract expansion; --include adds explicitly selected documents. Oversized packets fail without silently dropping essential fields. Increase --max-bytes deliberately or inspect a dependency separately. Its context_utf8_bytes is exact UTF-8 size, not a token estimate. Included callees carry documents only; inspect a callee with --bytes when its body is needed.
-
-Avoid exporting every section or reading large raw hex/map files into model context for a local edit. Whole-file verification, hashes, reverse-caller scans and checkpoints can run outside model context. The patch report finds declared callers; context does not scan every body or invent an index that is absent.
-
-## Reuse and evidence
-
-Retain verified adapters/diagnostic byte fragments with argument/result contracts, fixup manifests and tests. Add a reusable fragment when it removes demonstrated repetition; do not build a speculative framework first. Scripts may compose explicitly supplied byte blocks but must not compile application logic or select instruction encodings from a high-level program.
-
-Run fast failing-path checks during iteration. Do not repeat the full suite after every documentation edit or unchanged build. Broaden checks after a new dependency, ABI/layout change, failure or unresolved concern. Preserve failed evidence for diagnosis and record successful candidate commands/hashes.
-
-Machine code is compact on disk, but hex expands it and loses semantic names. Indexed contracts and bounded retrieval make iterative context small. Keep documentation concise and local; padded code/document reserves can dominate file size. Measure actual context, read bytes and used/reserved bytes before claiming a token or speed improvement.
+Keep the edit packet bounded. get defaults to 32 KiB; explicit --fixups may require a larger budget for a large diagnostic function. context remains an expanded compatibility/edit packet. Compact serialization saves disk; selective retrieval and removing repeated explanations save model context.

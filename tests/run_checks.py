@@ -11,6 +11,8 @@ import shutil
 import subprocess
 import sys
 import uuid
+import atexit
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 TOOL = ROOT/".agents/skills/direct-pe-x64/scripts/pe_workbench.py"
@@ -22,8 +24,16 @@ FIXTURE=args.fixture.resolve()
 MIGRATION=args.migration.resolve()
 if os.name != "nt":
     raise SystemExit("Native integration checks require Windows x64; inspect/verify can run elsewhere.")
-OUT = ROOT/"out"/("checks-"+uuid.uuid4().hex[:12])
-OUT.mkdir(parents=True)
+WORK=ROOT/"out"/"work";WORK.mkdir(parents=True,exist_ok=True)
+OUT=Path(tempfile.mkdtemp(prefix="maintenance-",dir=WORK))
+def retain_evidence():
+    report=OUT/"report.json"
+    if report.exists():
+        evidence=ROOT/"out"/"evidence";evidence.mkdir(parents=True,exist_ok=True)
+        shutil.copyfile(report,evidence/"maintenance.json")
+        if OUT.resolve().parent!=WORK.resolve() or not OUT.resolve().is_relative_to((ROOT/"out").absolute()) or OUT.is_symlink():raise RuntimeError("Unsafe test workspace")
+        shutil.rmtree(OUT)
+atexit.register(retain_evidence)
 EXE = OUT/"Starfall.exe"
 shutil.copyfile(FIXTURE,EXE)
 fixture_hash = hashlib.sha256(FIXTURE.read_bytes()).hexdigest()
@@ -63,9 +73,10 @@ def native(exe,*args,console=False,expected=0):
 
 with wb.PE(EXE) as pe:
     function_hashes={r["name"]:r["code_hash"] for r in pe.records if r["kind"]==1}
-    doc_hashes={r["name"]:r["doc_hash"] for r in pe.records}
+    doc_hashes={r["name"]:(r["doc_hash"],wb.digest(wb._meta.compact(pe.technical(r)))) for r in pe.records}
     move=pe.record("Move")
     move_doc=pe.document(move)
+    move_brief=pe.brief(move)
     move_code=pe.code(move)
     arch=pe.document(pe.record("Architecture"))
     legacy_entry=move["entry"]
@@ -75,8 +86,8 @@ inspect=json.loads(cli("inspect",EXE,"Move","--bytes").stdout)
 check("selective inspection reads under one tenth of image",inspect["read_stats"]["bytes_read"]<EXE.stat().st_size//10)
 check("selective inspection contains only Move document",inspect["module"]["name"]=="Move" and len(inspect["code_hex"])==154)
 check("inspection reports exact remaining document reserve",
-      inspect["storage"]["document_free_bytes"]==move["doc_capacity"]-len(wb.canonical(move_doc))-1)
-check("native self-description matches embedded module",json.loads(native(EXE,"--describe","Move").stdout)==move_doc)
+      inspect["storage"]["document_free_bytes"]==wb.metadata_free(move))
+check("native self-description matches embedded module",json.loads(native(EXE,"--describe","Move").stdout)==move_brief)
 check("native default description prints Architecture",json.loads(native(EXE,"--describe").stdout)["name"]=="Architecture")
 check("native data contract description",json.loads(native(EXE,"--describe","Data.ScoreRecord").stdout)["size"]==16)
 check("unknown native module returns exit 2",b"Unknown embedded module" in native(EXE,"--describe","missing",expected=2).stdout)
@@ -100,9 +111,9 @@ patch["hex"]=(move_code[:-1]+b"\x90\xc3").hex()
 cli("patch",EXE,OUT/"move.patch.json","--output",OUT/"one-function.exe")
 with wb.PE(OUT/"one-function.exe") as pe:
     after={r["name"]:r["code_hash"] for r in pe.records if r["kind"]==1}
-    docs_after={r["name"]:r["doc_hash"] for r in pe.records}
+    docs_after={r["name"]:(r["doc_hash"],wb.digest(wb._meta.compact(pe.technical(r)))) for r in pe.records}
     check("same-slot patch changes only Move code hash",[n for n in function_hashes if after[n]!=function_hashes[n]]==["Move"])
-    check("same-slot patch changes only Move document hash",[n for n in doc_hashes if docs_after[n]!=doc_hashes[n]]==["Move"])
+    check("same-slot patch changes only Move metadata",[n for n in doc_hashes if docs_after[n]!=doc_hashes[n]]==["Move"])
     check("same-slot patch preserves public address",pe.record("Move")["entry"]==legacy_entry)
     patched_move=pe.record("Move")
     allowed=[(pe.offset(patched_move["impl"],patched_move["slot"]),pe.offset(patched_move["impl"],patched_move["slot"])+patched_move["slot"]),

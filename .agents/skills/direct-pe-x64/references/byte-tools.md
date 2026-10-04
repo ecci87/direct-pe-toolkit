@@ -2,6 +2,12 @@
 
 scripts/raw_bytes.py provides ByteBlock, validate_fixups, parse_imports and pack_imports. These functions accept already chosen hex/data; they do not assemble mnemonics, compile expressions, select registers or implement application behavior.
 
+## Fixed byte profiles
+
+FUNCTION_PROFILES stores literal leaf/stack56 prologue, epilogue and unwind bytes. ByteBlock.framed(profile) wraps an explicit body and rebases its labels/fields. function_module(name, body, entry_rva=..., slot_bytes=..., profile=..., inputs=..., returns=..., contracts=..., purpose=...) derives a module definition. Neither chooses instructions or registers from application logic.
+
+The stack56 frame reserves 32 bytes of shadow space and 24 further bytes for caller locals/outgoing stack arguments. Do not overlap live spills with prepared stack arguments. These profiles have native regression coverage; they do not prove arbitrary bodies preserve registers or access valid memory.
+
 ## ByteBlock
 
 emit appends explicit hex or bytes. label names a current offset. relative appends a supplied opcode prefix, a four-byte displacement placeholder and an optional immediate tail; it records the end of the entire instruction. manifest returns code_hex, references and local_symbols. The workbench resolves fields to local offsets or stable external RVAs.
@@ -14,7 +20,7 @@ block.label("function.return").emit("c3")
 manifest = block.manifest()
 ```
 
-Import the helper from the skill's scripts directory in a packing script; no installed package is required. For an existing module, ByteBlock.from_module(document, code_hex) retains declared fields/labels. update_document returns an edited copy with updated code length/labels/references; review ABI, dependencies, profile and purpose separately.
+Import the helper from the skill's scripts directory in a packing script; no installed package is required. For an existing module, ByteBlock.from_module(document, code_hex) retains declared fields/labels. update_document returns an edited copy with updated code length/labels/references; review ABI and purpose; mechanical dependencies derive from the declarations in concise storage.
 
 insert_before(label, fragment, branch_targets="include") makes existing branches to that label enter the new bytes. "skip" keeps those branches pointed at the previous instruction. There is no implicit default: the same rebasing policy is not correct for every hook. New fragment labels must be unique. An insertion splitting a declared relative instruction, overlapping fields or inconsistent local label targets is rejected without modifying either object.
 

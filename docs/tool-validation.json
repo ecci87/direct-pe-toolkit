@@ -1,38 +1,47 @@
 {
+  "analyzer": "Capstone 5.0.7",
+  "audit": {
+    "functions": 45,
+    "instructions": 3321,
+    "relative_fields": 1872
+  },
+  "bodies_and_public_addresses_preserved": true,
+  "commands": [
+    "python tests/test_primitives.py --analyzer-path out/repo-improvement/analyzer",
+    "python tests/run_checks.py",
+    "python tools/pe_workbench.py overview examples/starfall/Starfall.exe",
+    "python tools/pe_workbench.py get examples/starfall/Starfall.exe Move --bytes"
+  ],
   "date": "2026-10-04",
-  "platform": "Windows-10-10.0.19045-SP0",
+  "fixture_sha256": "a01aff889e9700eb4d854f70bfabdd9ed1f42af3834367459522c9580170609a",
+  "helper_tests": {
+    "errors": 0,
+    "failures": 0,
+    "skipped": 0,
+    "tests": 31
+  },
+  "host": "Windows x64",
+  "maintenance_checks": 37,
+  "measurements": {
+    "exe_bytes": 235520,
+    "function_count": 45,
+    "function_output_bytes": 1026,
+    "metadata_section_bytes": 143360,
+    "module_count": 56,
+    "overview_output_bytes": 9101,
+    "readable_document_bytes": 36184,
+    "used_function_bytes": 18812
+  },
+  "native_console_assertions": 16,
+  "native_unit_assertions": 184,
   "python": "3.10.11",
-  "tool_sha256": "e744f3c4a963b30f43c56d4a47b3c328e5ad4c9c5c94f52c1a69a8abfdab450c",
-  "raw_helper_sha256": "d74494b98cf5801a86b5b5dc32ce733fc1009743c5cc3adda7d39b6a197bca21",
-  "primitive_suite": {
-    "tests": 20,
-    "passed": 20,
-    "standard_library_run": "15 passed; 5 optional analyzer tests skipped",
-    "optional_analyzer_run": "5 passed with Capstone 5.0.7",
-    "commands": [
-      "python tests/test_primitives.py",
-      "python tests/test_primitives.py StaticAuditTests --analyzer-path out/repo-improvement/analyzer"
-    ]
-  },
-  "maintenance_suite": {
-    "tests": 37,
-    "passed": 37,
-    "command": "python tests/run_checks.py"
-  },
-  "static_audit": {
-    "analyzer": "Capstone 5.0.7",
-    "functions": 40,
-    "instructions": 2479,
-    "relative_fields": 1348,
-    "valid": true
-  },
-  "context_sample": {
-    "context_utf8_bytes": 5666,
-    "bytes_read": 17192,
-    "executable_bytes": 747520
-  },
-  "limitations": [
-    "Byte sizes are not token estimates or a source/binary benchmark.",
-    "Static decoding does not prove runtime semantics or arbitrary host/application behavior."
-  ]
+  "source_sha256": {
+    ".agents/skills/direct-pe-x64/SKILL.md": "b4cd047ba0b63182fd464f975fb226be89360ec21a0cb5f298fb6a31df72fa39",
+    ".agents/skills/direct-pe-x64/scripts/module_metadata.py": "6235c6189aceea45cb8f73607c9ca8960973721ee3a6f9d9fe41f6ca10044362",
+    ".agents/skills/direct-pe-x64/scripts/pe_workbench.py": "2b34a7ae8beb7cc0578f86c3895bb38ad0924f334829a576d82658b77bfecb06",
+    ".agents/skills/direct-pe-x64/scripts/raw_bytes.py": "f9c4ca488e27e62d689c1f1d93de7237fa7d4adef3188a106058663ebadb1ea4",
+    "AGENTS.md": "36c0a816ca29bdfad050a411282266ef1418775f8e24ca4ae93ea680909b4e08",
+    "tests/run_checks.py": "84578c9c4cb5960831dccee87ed1b4e8ad9cbc39682e0c8e3d3a9c9969563a41",
+    "tests/test_primitives.py": "6e7094b917c7801a876aef0373a40a5c74c90b7357097dc1ef82f67ed11d8071"
+  }
 }

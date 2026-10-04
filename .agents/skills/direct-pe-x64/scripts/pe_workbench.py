@@ -21,6 +21,9 @@ MAX_READ = 16 * 1024 * 1024
 _raw_spec = importlib.util.spec_from_file_location("llmpe_raw_bytes", Path(__file__).with_name("raw_bytes.py"))
 _raw = importlib.util.module_from_spec(_raw_spec)
 _raw_spec.loader.exec_module(_raw)
+_meta_spec = importlib.util.spec_from_file_location("llmpe_module_metadata", Path(__file__).with_name("module_metadata.py"))
+_meta = importlib.util.module_from_spec(_meta_spec)
+_meta_spec.loader.exec_module(_meta)
 
 def fail(message):
     raise ValueError(message)
@@ -81,7 +84,7 @@ def record_bytes(rec):
     b[100:132] = rec["code_hash"]
     b[132:164] = rec["doc_hash"]
     b[164:180] = rec["abi_hash"]
-    struct.pack_into("<III", b, 180, rec.get("flags", 0), rec.get("generation", 1), 0)
+    struct.pack_into("<III", b, 180, rec.get("flags", 0), rec.get("generation", 1), rec.get("technical_rva", 0))
     return bytes(b)
 
 def read_record(b, offset):
@@ -95,7 +98,8 @@ def read_record(b, offset):
                 name=name, kind=kind, version=version, code_hash=b[100:132],
                 doc_hash=b[132:164], abi_hash=b[164:180],
                 flags=struct.unpack_from("<I", b, 180)[0],
-                generation=struct.unpack_from("<I", b, 184)[0], record_offset=offset)
+                generation=struct.unpack_from("<I", b, 184)[0],
+                technical_rva=struct.unpack_from("<I", b, 188)[0], record_offset=offset)
 
 class PE:
     def __init__(self, path, metadata=True):
@@ -142,7 +146,7 @@ class PE:
                 fail("Missing LLMPE64 metadata signature")
             major, minor = struct.unpack_from("<HH", self.meta_header, 8)
             header, width, cap, used, directory, arena, arena_end, arena_cap = struct.unpack_from("<8I", self.meta_header, 12)
-            if (major, header, width, cap, directory) != (1, HEADER_SIZE, RECORD_SIZE, DIRECTORY_CAPACITY, HEADER_SIZE):
+            if minor > 1 or (major, header, width, cap, directory) != (1, HEADER_SIZE, RECORD_SIZE, DIRECTORY_CAPACITY, HEADER_SIZE):
                 fail("Unsupported metadata schema")
             if used > cap or arena < directory + cap*width or arena_end > arena_cap or arena_cap > self.meta["raw_size"]:
                 fail("Metadata directory/arena bounds are invalid")
@@ -192,7 +196,22 @@ class PE:
             fail("Unknown module: " + name)
         return found[0]
 
-    def document(self, rec):
+    def technical(self, rec):
+        rva = rec.get("technical_rva", 0)
+        if not rva:
+            return {}
+        if not rec["flags"] & _meta.FLAG:
+            fail("Technical record lacks format flag")
+        lo, hi = rec["doc_rva"]+rec["doc_size"]+1, rec["doc_rva"]+rec["doc_capacity"]
+        if rva < lo or rva+_meta.HEADER > hi:
+            fail("Technical record outside module slot")
+        header = self.read(self.offset(rva,_meta.HEADER),_meta.HEADER)
+        size = struct.unpack_from("<I",header,8)[0]
+        if rva+_meta.HEADER+size > hi:
+            fail("Technical payload outside module slot")
+        return _meta.decode(header,self.read(self.offset(rva+_meta.HEADER,size),size))
+
+    def brief(self, rec):
         start = rec["doc_rva"] - self.meta["rva"]
         if start < self.arena or rec["doc_size"]+1 > rec["doc_capacity"] or start+rec["doc_capacity"] > self.meta["raw_size"]:
             fail("Module document is outside its arena: " + rec["name"])
@@ -202,6 +221,21 @@ class PE:
         doc = json.loads(payload[:-1].decode("utf-8"))
         if doc.get("schema") != "llm-pe.module.v1" or doc.get("name") != rec["name"] or doc.get("contract_version") != rec["version"]:
             fail("Module document identity/version mismatch")
+        if rec["flags"] & _meta.FLAG:
+            return doc
+        if not hasattr(self,"_legacy_documents"):self._legacy_documents={}
+        self._legacy_documents[rec["name"]]=doc
+        return _meta.parts(doc,rec["kind"])[0]
+
+    def document(self, rec):
+        if rec["flags"] & _meta.FLAG:
+            brief = self.brief(rec)
+            doc = _meta.expand(brief,self.technical(rec))
+            if _meta.parts(doc,rec["kind"])[0] != brief:
+                fail("Brief/edit-record mismatch: "+rec["name"])
+        else:
+            self.brief(rec)
+            doc=self._legacy_documents[rec["name"]]
         if abi_hash(doc) != rec["abi_hash"]:
             fail("ABI digest mismatch: " + rec["name"])
         return doc
@@ -341,22 +375,35 @@ def migrate(spec_path, output):
             hdr[128:128+len(message)] = message
             cursor = metadata["arena_offset"]
             for i, m in enumerate(modules):
-                doc = canonical(m["document"])
-                cap = m["capacity"]
-                if len(doc)+1 > cap or cursor+cap > metadata["raw_size"]:
-                    fail("Documentation slot/arena exhausted: " + m["name"])
-                impl = m["document"].get("implementation", {})
-                rec = dict(name=m["name"], kind=m["kind"], version=m["document"]["contract_version"],
-                           entry=impl.get("entry_rva", 0), impl=impl.get("implementation_rva", 0),
-                           used=len(m.get("_code", b"")), slot=impl.get("slot_bytes", 0),
-                           doc_rva=metadata["rva"]+cursor, doc_size=len(doc), doc_capacity=cap,
-                           code_hash=digest(m["_code"]) if m["kind"] == 1 else b"\0"*32,
-                           doc_hash=digest(doc), abi_hash=abi_hash(m["document"]), generation=1)
-                put(f, raw_meta+HEADER_SIZE+i*RECORD_SIZE, record_bytes(rec))
-                put(f, raw_meta+cursor, doc+b"\0")
-                cursor += cap
+                document=m["document"]
+                impl=document.get("implementation",{})
+                concise=metadata.get("format")=="concise-v1"
+                cap=align(_meta.stored_size(document,m["kind"])+metadata.get("document_headroom",256),256) if concise else m["capacity"]
+                rec=dict(name=m["name"],kind=m["kind"],version=document["contract_version"],
+                    entry=impl.get("entry_rva",0),impl=impl.get("implementation_rva",0),
+                    used=len(m.get("_code",b"")),slot=impl.get("slot_bytes",0),
+                    doc_rva=metadata["rva"]+cursor,doc_capacity=cap,
+                    code_hash=digest(m["_code"]) if m["kind"]==1 else b"\0"*32,generation=1)
+                if concise:
+                    normalized=_meta.expand(*_meta.parts(document,m["kind"]))
+                    rec["abi_hash"]=abi_hash(normalized)
+                    rec,payload=_meta.pack(document,rec)
+                    struct.pack_into("<H",hdr,10,1)
+                else:
+                    doc=canonical(document)
+                    if len(doc)+1>cap:fail("Documentation slot exhausted: "+m["name"])
+                    rec.update(doc_size=len(doc),doc_hash=digest(doc),abi_hash=abi_hash(document))
+                    payload=doc+b"\0"*(cap-len(doc))
+                if cursor+cap>metadata["raw_size"]:fail("Metadata arena exhausted: "+m["name"])
+                put(f,raw_meta+HEADER_SIZE+i*RECORD_SIZE,record_bytes(rec))
+                put(f,raw_meta+cursor,payload)
+                cursor+=cap
             struct.pack_into("<I", hdr, 36, cursor)
             put(f, raw_meta, hdr)
+        if metadata.get("format")=="concise-v1":
+            packed=tmp.with_name(tmp.name+".concise")
+            compact_image(tmp,packed,quiet=True)
+            os.replace(packed,tmp)
         verify(tmp, quiet=True)
         os.replace(tmp, output)
     except Exception:
@@ -449,6 +496,10 @@ def read_cstring(pe, rva, limit):
         data += c
     fail("Unterminated ASCII string")
 
+def metadata_free(rec):
+    end=rec.get("technical_rva",0) or rec["doc_rva"]+rec["doc_capacity"]
+    return end-rec["doc_rva"]-rec["doc_size"]-1
+
 def inspect(path,name,with_bytes=False):
     with PE(path) as pe:
         if name is None:
@@ -463,7 +514,7 @@ def inspect(path,name,with_bytes=False):
             result = dict(module=d, revision=dict(code_sha256=r["code_hash"].hex(),document_sha256=r["doc_hash"].hex(),
                                                   abi_digest=r["abi_hash"].hex(),generation=r["generation"]))
             result["storage"] = dict(document_bytes=r["doc_size"],document_capacity_bytes=r["doc_capacity"],
-                                     document_free_bytes=r["doc_capacity"]-r["doc_size"]-1,
+                                     document_free_bytes=metadata_free(r),
                                      code_free_bytes=r["slot"]-r["used"])
             if with_bytes and r["kind"] == 1:
                 result["code_hex"] = code.hex()
@@ -479,10 +530,12 @@ def template(path,name,output):
         doc = pe.document(r)
         code = pe.code(r)
         obj = dict(schema="llm-pe.patch.v1",module=name,expected_code_sha256=r["code_hash"].hex(),
-                   expected_document_sha256=r["doc_hash"].hex(),contract_version=r["version"],
+                   expected_document_sha256=r["doc_hash"].hex(),
+                   expected_technical_sha256=digest(_meta.compact(pe.technical(r))).hex() if r["flags"] & _meta.FLAG else None,
+                   contract_version=r["version"],
                    reason="Describe the intended function change.",hex=code.hex(),documentation=doc,
                    limits=dict(code_slot_bytes=r["slot"],document_capacity_bytes=r["doc_capacity"],
-                               document_bytes=r["doc_size"],document_free_bytes=r["doc_capacity"]-r["doc_size"]-1))
+                               document_bytes=r["doc_size"],document_free_bytes=metadata_free(r)))
     out = Path(output)
     if out.exists():
         fail("Patch template output exists")
@@ -503,6 +556,9 @@ def patch(path,patch_path,output,allow_relocate=False):
             fail("Only function bodies can use a routine patch")
         if patch_doc["expected_code_sha256"] != rec["code_hash"].hex() or patch_doc["expected_document_sha256"] != rec["doc_hash"].hex():
             fail("Stale patch: expected revision hashes differ")
+        expected_technical = patch_doc.get("expected_technical_sha256")
+        if rec["flags"] & _meta.FLAG and expected_technical != digest(_meta.compact(pe.technical(rec))).hex():
+            fail("Stale patch: technical records differ")
         doc = copy.deepcopy(patch_doc.get("documentation",original_doc))
         if doc["name"] != rec["name"] or patch_doc["contract_version"] != rec["version"] or doc["contract_version"] != rec["version"] or abi_hash(doc) != rec["abi_hash"]:
             fail("Public ABI/contract change requires an explicit migration")
@@ -579,14 +635,18 @@ def patch(path,patch_path,output,allow_relocate=False):
                 impl["unwind"] = unwind_info[impl["implementation_rva"]]
                 if relocated:
                     impl["gate"]["unwind"] = unwind_info[rec["entry"]]
-                payload = canonical(doc)
-                if len(payload)+1>rec["doc_capacity"]:
-                    fail("Module documentation slot exhausted; explicit migration required")
                 changed = dict(rec,impl=impl["implementation_rva"],used=len(code),slot=impl["slot_bytes"],
-                               doc_size=len(payload),code_hash=digest(code),doc_hash=digest(payload),
-                               generation=rec["generation"]+1)
+                               code_hash=digest(code),generation=rec["generation"]+1)
+                if rec["flags"] & _meta.FLAG:
+                    changed,payload = _meta.pack(doc,changed)
+                else:
+                    payload = canonical(doc)
+                    if len(payload)+1>rec["doc_capacity"]:
+                        fail("Module documentation slot exhausted; explicit migration required")
+                    changed.update(doc_size=len(payload),doc_hash=digest(payload))
+                    payload += b"\0"*(rec["doc_capacity"]-len(payload))
                 put(f,rec["record_offset"],record_bytes(changed))
-                put(f,pe.offset(rec["doc_rva"],rec["doc_capacity"]),payload+b"\0"*(rec["doc_capacity"]-len(payload)))
+                put(f,pe.offset(rec["doc_rva"],rec["doc_capacity"]),payload)
             verify(tmp,quiet=True)
             os.replace(tmp,output)
         except Exception:
@@ -805,7 +865,7 @@ def new_image(output, import_names=None):
                          dict(name="flags",offset=8,type="uint64",value=0)],ownership="Application-owned; no function currently accesses it.")),
             dict(name="Entry",kind=1,capacity=8192,code_hex=bytes(code).hex(),document=entry_doc)]
         spec=dict(schema="llm-pe.migration.v1",base_file="architecture/base.exe",output_file="unused.exe",
-                  metadata=dict(rva=0x1F000,virtual_size=0x60000,raw_size=0x60000,arena_offset=0x7000),
+                  metadata=dict(rva=0x1F000,virtual_size=0x60000,raw_size=0x60000,arena_offset=0x7000,format="concise-v1"),
                   code_arena=dict(rva=0x1B000,virtual_size=0x4000,raw_size=0x4000),modules=module_specs)
         spec_file.write_bytes(canonical(spec))
         migrate(spec_file,output)
@@ -893,10 +953,11 @@ def module_view(pe, name, with_bytes=False):
     doc = pe.document(rec)
     result = dict(module=doc, revision=dict(code_sha256=rec["code_hash"].hex(),
                   document_sha256=rec["doc_hash"].hex(), abi_digest=rec["abi_hash"].hex(),
-                  generation=rec["generation"]),
+                  generation=rec["generation"],
+                  technical_sha256=digest(_meta.compact(pe.technical(rec))).hex() if rec["flags"]&_meta.FLAG else None),
                   storage=dict(code_slot_bytes=rec["slot"], code_free_bytes=rec["slot"]-rec["used"],
                     document_capacity_bytes=rec["doc_capacity"],
-                    document_free_bytes=rec["doc_capacity"]-rec["doc_size"]-1))
+                    document_free_bytes=metadata_free(rec)))
     if with_bytes and rec["kind"] == 1:
         result["code_hex"] = pe.code(rec).hex()
     return result
@@ -1035,12 +1096,171 @@ def audit_view(path, name, analyzer_path=None, listing=False):
     return result
 
 
+def compact_image(path,output,quiet=False,headroom=256):
+    """Repack the last metadata section; preserve all code/data RVAs and bytes."""
+    path,output=Path(path),Path(output)
+    if output.exists() or path.resolve()==output.resolve():
+        fail("Choose a new compact candidate")
+    tmp=output.with_name(output.name+".building")
+    if tmp.exists():fail("Unfinished compact candidate exists")
+    with PE(path) as pe:
+        if pe.sections[-1]["name"]!=".llm" or pe.meta["raw_offset"]+pe.meta["raw_size"]!=pe.size or pe.directories[4]!=(0,0):
+            fail("Compaction requires final .llm with no overlay/certificate")
+        documents=[pe.document(r) for r in pe.records]
+        records=copy.deepcopy(pe.records)
+        sizes=[align(_meta.stored_size(d,r["kind"])+headroom,256) for d,r in zip(documents,records)]
+        total=align(pe.arena+sum(sizes)+4096,pe.section_align)
+        for d,r in zip(documents,records):
+            if r["kind"]==3 and "reserve_profile" in d:d["reserve_profile"]["metadata_bytes"]=total
+        sizes=[align(_meta.stored_size(d,r["kind"])+headroom,256) for d,r in zip(documents,records)]
+        total=align(pe.arena+sum(sizes)+4096,pe.section_align)
+        header=bytearray(pe.meta_header)
+        struct.pack_into("<H",header,10,1)
+        struct.pack_into("<I",header,40,total)
+        data=bytearray(total);cursor=pe.arena;brief_bytes=technical_bytes=0
+        for i,(d,r,capacity) in enumerate(zip(documents,records,sizes)):
+            r.update(doc_rva=pe.meta["rva"]+cursor,doc_capacity=capacity)
+            normalized=_meta.expand(*_meta.parts(d,r["kind"]))
+            r["abi_hash"]=abi_hash(normalized)
+            changed,payload=_meta.pack(d,r)
+            data[HEADER_SIZE+i*RECORD_SIZE:HEADER_SIZE+(i+1)*RECORD_SIZE]=record_bytes(changed)
+            data[cursor:cursor+capacity]=payload
+            brief_bytes+=changed["doc_size"]
+            technical_bytes+=len(_meta.encode(d,r["kind"])[1])
+            cursor+=capacity
+        struct.pack_into("<I",header,36,cursor)
+        data[:HEADER_SIZE]=header
+        try:
+            shutil.copyfile(path,tmp)
+            with tmp.open("r+b") as f:
+                put(f,pe.meta["raw_offset"],data);f.truncate(pe.meta["raw_offset"]+total)
+                sh=pe.table_offset+(len(pe.sections)-1)*40
+                put(f,sh+8,struct.pack("<I",total));put(f,sh+16,struct.pack("<I",total))
+                initialized=struct.unpack_from("<I",pe.opt,8)[0]-pe.meta["raw_size"]+total
+                put(f,pe.opt_offset+8,struct.pack("<I",initialized))
+                put(f,pe.opt_offset+56,struct.pack("<I",pe.meta["rva"]+total))
+            verify(tmp,quiet=True);os.replace(tmp,output)
+        except Exception:
+            if tmp.exists():tmp.unlink()
+            raise
+    result=dict(output=str(output),bytes=output.stat().st_size,brief_document_bytes=brief_bytes,
+        technical_record_bytes=technical_bytes,metadata_section_bytes=total,sha256=stream_hash(output))
+    if not quiet:print(json.dumps(result,indent=2))
+    return result
+
+def view_output(result,output=None,max_bytes=32768):
+    """Compact JSON with an exact bound; no surprise file overwrites."""
+    payload=(json.dumps(result,sort_keys=True,separators=(",",":"),ensure_ascii=True)+"\n").encode()
+    if len(payload)>max_bytes:fail("View exceeds byte budget; select a function or increase --max-bytes")
+    if output:
+        destination=Path(output)
+        if destination.exists():fail("View output exists")
+        destination.write_bytes(payload)
+        print(json.dumps(dict(output=str(destination),bytes=len(payload))))
+    else:print(payload.decode(),end="")
+    return result
+
+def overview_view(path,output=None,max_bytes=32768):
+    with PE(path) as pe:
+        architecture=pe.brief(pe.record("Architecture"))
+        result=dict(schema="llm-pe.overview.v1",architecture=architecture,
+            functions=[dict(name=r["name"],entry_rva=r["entry"],body_rva=r["impl"],used=r["used"],capacity=r["slot"],
+                purpose=pe.brief(r).get("purpose","")) for r in pe.records if r["kind"]==1],
+            contracts=[dict(name=r["name"],purpose=pe.brief(r).get("purpose","")) for r in pe.records if r["kind"]==2],
+            read_stats=dict(bytes_read=pe.bytes_read,executable_bytes=pe.size))
+    return view_output(result,output,max_bytes)
+
+def graph_view(path,name=None,output=None,max_bytes=32768):
+    with PE(path) as pe:
+        functions={r["name"]:pe.brief(r) for r in pe.records if r["kind"]==1}
+        if name and name not in functions:fail("Unknown function: "+name)
+        edges=sorted({(caller,callee) for caller,d in functions.items() for callee in d.get("calls",[])})
+        if name:edges=[(a,b) for a,b in edges if name in (a,b)]
+        result=dict(schema="llm-pe.calls.v1",edges=[list(e) for e in edges],
+            imports={n:d.get("imports",[]) for n,d in functions.items() if (not name or n==name) and d.get("imports")},
+            scope="Declared direct calls; indirect/dynamic calls are not inferred.",
+            read_stats=dict(bytes_read=pe.bytes_read,executable_bytes=pe.size))
+    return view_output(result,output,max_bytes)
+
+def get_view(path,name,with_bytes=False,with_fixups=False,raw=False,output=None,max_bytes=32768):
+    with PE(path) as pe:
+        r=pe.record(name);d=pe.brief(r)
+        result=dict(schema="llm-pe.get.v1",module=d,
+            address=dict(entry_rva=r["entry"],body_rva=r["impl"],file_offset=pe.offset(r["impl"]) if r["kind"]==1 else None,
+                preferred_image_base=pe.base,used_bytes=r["used"],capacity_bytes=r["slot"]),
+            revision=dict(code_sha256=r["code_hash"].hex(),document_sha256=r["doc_hash"].hex(),generation=r["generation"]))
+        if r["kind"]==2:
+            data_rva=d.get("rva");file_offset=None
+            if data_rva is not None:
+                try:file_offset=pe.offset(data_rva,d.get("size",1))
+                except ValueError:pass
+            result["address"]=dict(data_rva=data_rva,size_bytes=d.get("size"),file_offset=file_offset,preferred_image_base=pe.base)
+        if with_bytes and r["kind"]==1:
+            body=pe.read(pe.offset(r["impl"],r["used"]),r["used"]) if raw else pe.code(r)
+            result["code_hex"]=body.hex();result["code_hash_matches"]=digest(body)==r["code_hash"]
+        if with_fixups:result["edit_records"]=pe.document(r)
+        result["read_stats"]=dict(bytes_read=pe.bytes_read,executable_bytes=pe.size)
+    return view_output(result,output,max_bytes)
+
+def sync_image(path,name,output,used_bytes=None,manifest=None):
+    """Refresh indexing after a direct same-slot byte edit; never invent fixups."""
+    path,output=Path(path),Path(output)
+    if output.exists() or path.resolve()==output.resolve():fail("Choose a new synchronized candidate")
+    tmp=output.with_name(output.name+".building")
+    if tmp.exists():fail("Unfinished synchronized candidate exists")
+    with PE(path) as pe:
+        rec=pe.record(name)
+        if rec["kind"]!=1:fail("sync targets a named function")
+        d=json.loads(Path(manifest).read_text()) if manifest else pe.document(rec)
+        if d["name"]!=name or d["contract_version"]!=rec["version"] or abi_hash(d)!=rec["abi_hash"]:
+            fail("sync preserves the indexed ABI; update a changed layout/interface explicitly")
+        used=rec["used"] if used_bytes is None else used_bytes
+        if not 0<used<=rec["slot"]:fail("Edited body exceeds the indexed slot")
+        code=pe.read(pe.offset(rec["impl"],used),used);check_profile(d,code)
+        impl=d["implementation"]
+        if (impl["entry_rva"],impl["implementation_rva"],impl["slot_bytes"])!=(rec["entry"],rec["impl"],rec["slot"]):
+            fail("sync preserves public entry/body location and slot")
+        impl["used_bytes"]=used
+        rows=runtime_entries(pe)
+        for row in rows:
+            if row[0]==rec["impl"]:row[1]=rec["impl"]+used
+        try:
+            shutil.copyfile(path,tmp)
+            with tmp.open("r+b") as f:
+                info=write_runtime(pe,f,rows,{rec["impl"]:profile(d)})
+                impl["unwind"]=info[rec["impl"]]
+                changed=dict(rec,used=used,code_hash=digest(code),generation=rec["generation"]+1)
+                if rec["flags"]&_meta.FLAG:changed,payload=_meta.pack(d,changed)
+                else:
+                    payload=canonical(d)
+                    if len(payload)+1>rec["doc_capacity"]:fail("Metadata slot exhausted")
+                    changed.update(doc_size=len(payload),doc_hash=digest(payload))
+                    payload+=b"\0"*(rec["doc_capacity"]-len(payload))
+                put(f,pe.offset(rec["impl"]+used,rec["slot"]-used),b"\xcc"*(rec["slot"]-used))
+                put(f,rec["record_offset"],record_bytes(changed))
+                put(f,pe.offset(rec["doc_rva"],rec["doc_capacity"]),payload)
+            verify(tmp,quiet=True);os.replace(tmp,output)
+        except Exception:
+            if tmp.exists():tmp.unlink()
+            raise
+    result=binary_diff(path,output);result.update(module=name,native_tests_run=False,sha256=stream_hash(output))
+    print(json.dumps(result,indent=2));return result
+
+
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     sub=p.add_subparsers(dest="command",required=True)
     q=sub.add_parser("new");q.add_argument("--output",required=True);q.add_argument("--imports",nargs="*")
     q=sub.add_parser("migrate");q.add_argument("spec");q.add_argument("--output")
     q=sub.add_parser("inspect");q.add_argument("exe");q.add_argument("module",nargs="?");q.add_argument("--bytes",action="store_true")
+    q=sub.add_parser("compact");q.add_argument("exe");q.add_argument("--output",required=True)
+    q=sub.add_parser("overview");q.add_argument("exe");q.add_argument("--output");q.add_argument("--max-bytes",type=int,default=32768)
+    q=sub.add_parser("graph");q.add_argument("exe");q.add_argument("module",nargs="?");q.add_argument("--output");q.add_argument("--max-bytes",type=int,default=32768)
+    q=sub.add_parser("get");q.add_argument("exe");q.add_argument("module");q.add_argument("--bytes",action="store_true")
+    q.add_argument("--fixups",action="store_true");q.add_argument("--raw",action="store_true")
+    q.add_argument("--output");q.add_argument("--max-bytes",type=int,default=32768)
+    q=sub.add_parser("sync");q.add_argument("exe");q.add_argument("module");q.add_argument("--output",required=True)
+    q.add_argument("--used-bytes",type=int);q.add_argument("--manifest")
     q=sub.add_parser("verify");q.add_argument("exe")
     q=sub.add_parser("context");q.add_argument("exe");q.add_argument("module")
     q.add_argument("--include",action="append",default=[]);q.add_argument("--no-contracts",action="store_true")
@@ -1058,6 +1278,11 @@ def main():
     elif a.command=="migrate":migrate(a.spec,a.output)
     elif a.command=="inspect":inspect(a.exe,a.module,a.bytes)
     elif a.command=="verify":verify(a.exe)
+    elif a.command=="compact":compact_image(a.exe,a.output)
+    elif a.command=="overview":overview_view(a.exe,a.output,a.max_bytes)
+    elif a.command=="graph":graph_view(a.exe,a.module,a.output,a.max_bytes)
+    elif a.command=="get":get_view(a.exe,a.module,a.bytes,a.fixups,a.raw,a.output,a.max_bytes)
+    elif a.command=="sync":sync_image(a.exe,a.module,a.output,a.used_bytes,a.manifest)
     elif a.command=="context":context_view(a.exe,a.module,a.include,not a.no_contracts,a.max_bytes,a.output)
     elif a.command=="imports":imports_view(a.exe,a.resolve)
     elif a.command=="audit":audit_view(a.exe,a.module,a.analyzer_path,a.listing)
@@ -1070,6 +1295,6 @@ def main():
 if __name__=="__main__":
     try:
         main()
-    except (ValueError,KeyError,OSError,json.JSONDecodeError,struct.error) as e:
+    except (ValueError,KeyError,OSError,json.JSONDecodeError,struct.error,zlib.error) as e:
         print("ERROR: "+str(e),file=sys.stderr)
         sys.exit(1)

@@ -23,4 +23,4 @@ jobs:
         if: always()
         with:
           name: native-check-evidence
-          path: out/checks-*/report.json
+          path: out/evidence/*.json

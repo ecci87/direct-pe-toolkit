@@ -1,5 +1,5 @@
 {
-  "exe_sha256": "793253c64a12b10e5e9c1dc5d68050563a540d7c0e408992e6e2a509b0a8f07e",
+  "exe_sha256": "a01aff889e9700eb4d854f70bfabdd9ed1f42af3834367459522c9580170609a",
   "passed": 37,
   "results": [
     {
@@ -52,7 +52,7 @@
     },
     {
       "pass_": true,
-      "test": "same-slot patch changes only Move document hash"
+      "test": "same-slot patch changes only Move metadata"
     },
     {
       "pass_": true,
