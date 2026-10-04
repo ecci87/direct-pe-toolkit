@@ -1,0 +1,19 @@
+name: Verify raw PE toolkit
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+jobs:
+  windows-native:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - run: python tests/run_checks.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-check-evidence
+          path: out/checks-*/report.json

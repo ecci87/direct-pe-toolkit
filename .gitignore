@@ -1,0 +1,9 @@
+out/
+__pycache__/
+*.py[cod]
+*.building
+*.patch-report.json
+*.score
+*.log
+.vscode/
+.DS_Store

@@ -1,0 +1,154 @@
+{
+  "exe_sha256": "cf3c5a23abfdbf11d39e96f4e0b13cf11c23f8a5a436b9543fdf3d2f235ae02c",
+  "passed": 37,
+  "results": [
+    {
+      "pass_": true,
+      "test": "selective inspection reads under one tenth of image"
+    },
+    {
+      "pass_": true,
+      "test": "selective inspection contains only Move document"
+    },
+    {
+      "pass_": true,
+      "test": "inspection reports exact remaining document reserve"
+    },
+    {
+      "pass_": true,
+      "test": "native self-description matches embedded module"
+    },
+    {
+      "pass_": true,
+      "test": "native default description prints Architecture"
+    },
+    {
+      "pass_": true,
+      "test": "native data contract description"
+    },
+    {
+      "pass_": true,
+      "test": "unknown native module returns exit 2"
+    },
+    {
+      "pass_": true,
+      "test": "updated EXE passes 51 shared native tests"
+    },
+    {
+      "pass_": true,
+      "test": "updated EXE passes five real console assertions"
+    },
+    {
+      "pass_": true,
+      "test": "patch template exposes document and code capacities"
+    },
+    {
+      "pass_": true,
+      "test": "document overflow leaves no promoted or temporary candidate"
+    },
+    {
+      "pass_": true,
+      "test": "same-slot patch changes only Move code hash"
+    },
+    {
+      "pass_": true,
+      "test": "same-slot patch changes only Move document hash"
+    },
+    {
+      "pass_": true,
+      "test": "same-slot patch preserves public address"
+    },
+    {
+      "pass_": true,
+      "test": "byte diff is limited to function, its metadata and unwind"
+    },
+    {
+      "pass_": true,
+      "test": "same-slot patch still passes all native tests"
+    },
+    {
+      "pass_": true,
+      "test": "stale patch rejected before candidate creation"
+    },
+    {
+      "pass_": true,
+      "test": "ABI-breaking patch rejected"
+    },
+    {
+      "pass_": true,
+      "test": "overflow requires explicit relocation"
+    },
+    {
+      "pass_": true,
+      "test": "relocation keeps original callable entry"
+    },
+    {
+      "pass_": true,
+      "test": "relocation has explicit jump gate and separate unwind"
+    },
+    {
+      "pass_": true,
+      "test": "relocation changes no other function implementation hash"
+    },
+    {
+      "pass_": true,
+      "test": "global symbol registry remains stable after relocation"
+    },
+    {
+      "pass_": true,
+      "test": "relocated raw-byte function passes all 51 native tests"
+    },
+    {
+      "pass_": true,
+      "test": "relocated function passes real console integration"
+    },
+    {
+      "pass_": true,
+      "test": "deterministic project rebuild is byte-for-byte identical"
+    },
+    {
+      "pass_": true,
+      "test": "corrupted code is detected by embedded hash"
+    },
+    {
+      "pass_": true,
+      "test": "native description works from Unicode/spaced path"
+    },
+    {
+      "pass_": true,
+      "test": "native tests work from Unicode/spaced path"
+    },
+    {
+      "pass_": true,
+      "test": "second growth preserves entry and retires previous body"
+    },
+    {
+      "pass_": true,
+      "test": "twice relocated body passes all native assertions"
+    },
+    {
+      "pass_": true,
+      "test": "native failed assertion produces FAIL log and exit 1"
+    },
+    {
+      "pass_": true,
+      "test": "scaffold honestly declares missing native diagnostic modes"
+    },
+    {
+      "pass_": true,
+      "test": "raw-byte scaffold loads and exits on Windows"
+    },
+    {
+      "pass_": true,
+      "test": "explicit Windows DLL imports produce loader-valid scaffold"
+    },
+    {
+      "pass_": true,
+      "test": "raw migration reproduces annotated fixture byte-for-byte"
+    },
+    {
+      "pass_": true,
+      "test": "test harness preserves checked-in fixture"
+    }
+  ]
+}
