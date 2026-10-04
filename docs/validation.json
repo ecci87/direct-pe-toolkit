@@ -1,5 +1,5 @@
 {
-  "exe_sha256": "cf3c5a23abfdbf11d39e96f4e0b13cf11c23f8a5a436b9543fdf3d2f235ae02c",
+  "exe_sha256": "793253c64a12b10e5e9c1dc5d68050563a540d7c0e408992e6e2a509b0a8f07e",
   "passed": 37,
   "results": [
     {
@@ -32,11 +32,11 @@
     },
     {
       "pass_": true,
-      "test": "updated EXE passes 51 shared native tests"
+      "test": "updated EXE passes its declared native unit assertions"
     },
     {
       "pass_": true,
-      "test": "updated EXE passes five real console assertions"
+      "test": "updated EXE passes its declared console assertions"
     },
     {
       "pass_": true,
@@ -96,7 +96,7 @@
     },
     {
       "pass_": true,
-      "test": "relocated raw-byte function passes all 51 native tests"
+      "test": "relocated raw-byte function passes all native assertions"
     },
     {
       "pass_": true,

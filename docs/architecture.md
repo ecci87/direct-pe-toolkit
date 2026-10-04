@@ -1,15 +1,27 @@
-# Embedded architecture and scalable edits
+# Architecture for selective direct-byte edits
 
-The upgraded Starfall EXE is a concrete example, not only an instruction proposal. It contains 38 indexed JSON documents: 29 functions, seven data contracts, Architecture and Symbols. Public addresses of the original 28 functions remain stable. Entry now dispatches a native DescribeRequest function before the existing game/test modes.
+Application behavior is stored in explicit instruction bytes. The workbench packs PE structures and declared references; it does not compile or choose opcodes. Ordinary Windows DLL APIs are the platform boundary. Development-only static analyzers can check encoded instructions independently.
 
-Each function has its own used body, padded capacity, revision hashes, ABI declaration, dependencies, local fixups and tests. .llm keeps these documents separate and readable. The directory lets a tool fetch a single function without reading every body. Inspecting Move and its bytes reads 11,303 bytes from the 462,848-byte reference image; loading relevant contracts/callees adds only their own ranges.
+## Independent modules
 
-Within its reserve, a function update changes its body, document, directory record and necessary unwind metadata. A larger body can relocate into .mods behind its stable entry. The integration checks verify that all other function implementation hashes and public target symbols stay unchanged, and run native tests against both variants.
+An executable directory indexes function bodies, data contracts, architecture and stable symbols. Each function has a padded slot, public entry, implementation range, code/document/ABI hashes, local labels, fixups and an ABI document. Data contracts declare bounds, ownership, field types/units, mutation and error behavior.
 
-This preserves the original gameplay: an @ dodges falling stars, difficulty rises, and survival time becomes the high score. The legacy code still accesses fixed global state; its seven data contracts now expose those exact layouts. New applications should use explicit context-pointer APIs to reduce such coupling. Converting the game's entire ABI would be a separate migration.
+New module interfaces should pass explicit bounded arguments. A size/version header is useful for evolving contexts; separate contexts and storage contracts when ownership differs. The exact application decides host entry, callbacks, concurrency and resource lifecycle. There is no required event loop, console, board, timer or persistence format.
 
-The original executable is 53,248 bytes. The annotated example is 462,848 bytes, mostly because documentation and future growth have reserved capacity. This is a deliberate inspectability/growth tradeoff. Capacities can be reduced for a release profile or enlarged through a reviewed migration. A release without metadata would need a separate development artifact and a different inspection workflow.
+Windows x64 volatile/nonvolatile register rules, stack alignment and unwind layout apply regardless of application. The current helper supports leaf and stack56 frames. More complex prologues require explicit encoder/verifier extensions, not an undocumented workaround.
 
-Current implementation limits are explicit: finite .mods/.llm/unwind capacity, two supported frame profiles, routine patches only for existing function modules, and checkpoint rebuilds rather than automatic arbitrary source edits. Verification checks recorded invariants, not the semantics of unknown opcodes. This approach is useful for small direct-byte experiments; it does not acquire compiler-scale optimization, type checking or automatic linking merely by adding metadata.
+## Stable edits
 
-See [the protocol](../.agents/skills/direct-pe-x64/references/module-protocol.md) for binary offsets, commands and migration boundaries. The proposed next extensions are context-based module APIs, indexed dependency queries, additional unwind encodings and deliberate module/import migration support. Those are future improvements, not claimed implemented features.
+Callers target stable public entries; bodies can relocate behind jump gates when a slot fills. Same-slot edits rewrite only the affected body/document/record and necessary unwind metadata. The patch report identifies declared callers without placing unrelated bodies into model context.
+
+Routine patches preserve contract version and public ABI. Function/import additions, data changes and unsupported profiles are explicit migrations. Reserves remain finite; read the current image's capacities rather than importing the example's layout assumptions.
+
+## Context and tooling
+
+inspect reads the compact directory or one named module. context returns one body plus necessary documents, with compact JSON, revision hashes and a byte budget. It does not load all function bodies or fabricate an absent caller index. Whole-file hashes, structural checks and checkpoint snapshots run outside model context.
+
+raw_bytes.py centralizes declared field ends, local-label rebasing, explicit insertion policy and import packing. It accepts literal bytes and symbolic addresses, not a high-level application or assembly language. The static audit adapter independently decodes a selected body and compares it with those declarations.
+
+Small machine code does not by itself imply low token use: hex is larger than raw bytes and semantic information must be retained. Independent contracts and retrieval boundaries make small edits efficient. Keep descriptions local, preserve evidence and avoid oversized universal contexts/reserves.
+
+See [fast workflow](../.agents/skills/direct-pe-x64/references/fast-workflow.md), [byte tools](../.agents/skills/direct-pe-x64/references/byte-tools.md) and [module protocol](../.agents/skills/direct-pe-x64/references/module-protocol.md).

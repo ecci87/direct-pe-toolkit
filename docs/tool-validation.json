@@ -1,0 +1,38 @@
+{
+  "date": "2026-10-04",
+  "platform": "Windows-10-10.0.19045-SP0",
+  "python": "3.10.11",
+  "tool_sha256": "e744f3c4a963b30f43c56d4a47b3c328e5ad4c9c5c94f52c1a69a8abfdab450c",
+  "raw_helper_sha256": "d74494b98cf5801a86b5b5dc32ce733fc1009743c5cc3adda7d39b6a197bca21",
+  "primitive_suite": {
+    "tests": 20,
+    "passed": 20,
+    "standard_library_run": "15 passed; 5 optional analyzer tests skipped",
+    "optional_analyzer_run": "5 passed with Capstone 5.0.7",
+    "commands": [
+      "python tests/test_primitives.py",
+      "python tests/test_primitives.py StaticAuditTests --analyzer-path out/repo-improvement/analyzer"
+    ]
+  },
+  "maintenance_suite": {
+    "tests": 37,
+    "passed": 37,
+    "command": "python tests/run_checks.py"
+  },
+  "static_audit": {
+    "analyzer": "Capstone 5.0.7",
+    "functions": 40,
+    "instructions": 2479,
+    "relative_fields": 1348,
+    "valid": true
+  },
+  "context_sample": {
+    "context_utf8_bytes": 5666,
+    "bytes_read": 17192,
+    "executable_bytes": 747520
+  },
+  "limitations": [
+    "Byte sizes are not token estimates or a source/binary benchmark.",
+    "Static decoding does not prove runtime semantics or arbitrary host/application behavior."
+  ]
+}

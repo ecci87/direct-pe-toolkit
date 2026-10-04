@@ -3,6 +3,7 @@
 import argparse
 import copy
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -17,6 +18,9 @@ MAGIC = b"LLMPE64\0"
 HEADER_SIZE, RECORD_SIZE, DIRECTORY_CAPACITY = 512, 192, 128
 UNWIND_CAPACITY, UNWIND_POOL, UNWIND_SLOT = 48, 576, 8
 MAX_READ = 16 * 1024 * 1024
+_raw_spec = importlib.util.spec_from_file_location("llmpe_raw_bytes", Path(__file__).with_name("raw_bytes.py"))
+_raw = importlib.util.module_from_spec(_raw_spec)
+_raw_spec.loader.exec_module(_raw)
 
 def fail(message):
     raise ValueError(message)
@@ -217,6 +221,7 @@ def put(f, offset, data):
     f.write(data)
 
 def patch_references(doc, code, symbols, base):
+    _raw.validate_fixups(code, doc.get("references", []), doc.get("local_symbols", {}))
     b = bytearray(code)
     for r in doc.get("references", []):
         at, next_off = r["offset"], r["next_offset"]
@@ -432,35 +437,8 @@ def verify(path, quiet=False):
     return result
 
 def validate_imports(pe):
-    rva, size = pe.directories[1]
-    if not rva or size % 20:
-        fail("Invalid import directory")
-    desc = pe.read(pe.offset(rva,size), size)
-    declared=pe.document(pe.record("Architecture")).get("design",{}).get("system_imports")
-    terminated = False
-    for p in range(0,size,20):
-        lookup, timestamp, forward, name, iat = struct.unpack_from("<5I",desc,p)
-        if not any((lookup,timestamp,forward,name,iat)):
-            terminated = True
-            break
-        dll = read_cstring(pe,name,256)
-        if not re.fullmatch(r"[A-Za-z0-9_.-]+\.dll",dll,re.IGNORECASE) or declared is not None and dll.lower() not in {x.lower() for x in declared}:
-            fail("DLL is invalid or absent from declared imports: "+dll)
-        for i in range(4096):
-            value = struct.unpack("<Q", pe.read(pe.offset(lookup+i*8,8),8))[0]
-            if not value:
-                break
-            iat_value = struct.unpack("<Q", pe.read(pe.offset(iat+i*8,8),8))[0]
-            if iat_value != value:
-                fail("On-disk IAT/ILT mismatch")
-            if value >> 63:
-                continue
-            pe.read(pe.offset(value,2),2)
-            read_cstring(pe,value+2,256)
-        else:
-            fail("Unterminated import lookup")
-    if not terminated:
-        fail("Unterminated import descriptors")
+    declared = pe.document(pe.record("Architecture")).get("design", {}).get("system_imports")
+    import_inventory(pe, declared)
 
 def read_cstring(pe, rva, limit):
     data = bytearray()
@@ -491,6 +469,7 @@ def inspect(path,name,with_bytes=False):
                 result["code_hex"] = code.hex()
         result["read_stats"] = dict(bytes_read=pe.bytes_read,executable_bytes=pe.size)
     print(json.dumps(result,indent=2))
+    return result
 
 def template(path,name,output):
     with PE(path) as pe:
@@ -728,15 +707,7 @@ def new_image(output, import_names=None):
     output=Path(output).resolve()
     if output.exists():
         fail("New image output exists")
-    imports={}
-    for declaration in import_names or ["KERNEL32.dll:ExitProcess"]:
-        parts=declaration.split(":")
-        if len(parts)!=2 or not re.fullmatch(r"[A-Za-z0-9_.-]+\.dll",parts[0],re.IGNORECASE) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*",parts[1]):
-            fail("Use DLL.dll:FunctionName for each import")
-        dll,api=parts
-        imports.setdefault(dll,[])
-        if api not in imports[dll]:
-            imports[dll].append(api)
+    imports = _raw.parse_imports(import_names or ["KERNEL32.dll:ExitProcess"])
     if not any(dll.lower()=="kernel32.dll" and "ExitProcess" in names for dll,names in imports.items()):
         fail("The scaffold requires KERNEL32.dll:ExitProcess")
     output.parent.mkdir(parents=True,exist_ok=True)
@@ -749,30 +720,13 @@ def new_image(output, import_names=None):
     base=arch/"base.exe"
     spec_file=arch/"migration.json"
     try:
-        ro=bytearray(20*(len(imports)+1))
-        symbols={"Entry":0x1000,"app_context":0x15000,"image.base":0}
-        descriptors=[]
-        for dll,names in imports.items():
-            name_rva=0x11000+len(ro)
-            ro+=dll.encode("ascii")+b"\0"
-            hint=[]
-            for api in names:
-                if len(ro)%2:ro+=b"\0"
-                hint.append(0x11000+len(ro))
-                ro+=b"\0\0"+api.encode("ascii")+b"\0"
-            while len(ro)%8:ro+=b"\0"
-            ilt=0x11000+len(ro)
-            values=b"".join(struct.pack("<Q",v) for v in hint)+b"\0"*8
-            ro+=values
-            iat=0x11000+len(ro)
-            ro+=values
-            for i,api in enumerate(names):
-                key="iat."+api
-                if key in symbols:fail("Ambiguous import function name; rename registry keys in an explicit layout")
-                symbols[key]=iat+i*8
-            descriptors.append((ilt,name_rva,iat))
-        for i,(ilt,name_rva,iat) in enumerate(descriptors):
-            struct.pack_into("<5I",ro,i*20,ilt,0,0,name_rva,iat)
+        packed = _raw.pack_imports([dll+":"+api for dll,names in imports.items() for api in names],
+                                   0x11000, capacity=0x4000)
+        ro = bytearray(packed["data"])
+        symbols = {"Entry":0x1000, "app_context":0x15000, "image.base":0}
+        symbols.update({name:rva for name,rva in packed["symbols"].items() if name.count(".")==1})
+        if len(symbols)-3 != sum(len(names) for names in imports.values()):
+            fail("Ambiguous import name; use qualified registry keys in an explicit layout")
         while len(ro)%8:ro+=b"\0"
         anchor=0x11000+len(ro)
         symbols["imageAnchor"]=anchor
@@ -816,12 +770,10 @@ def new_image(output, import_names=None):
         struct.pack_into("<I",image,o+108,16)
         def directory(n,rva,size):
             struct.pack_into("<II",image,o+112+n*8,rva,size)
-        directory(1,0x11000,20*(len(imports)+1))
+        directory(1,*packed["import_directory"])
         directory(3,0x19000,12)
         directory(5,0x1A000,12)
-        iat_min=min(v[2] for v in descriptors)
-        iat_end=max(symbols["iat."+api]+8 for names in imports.values() for api in names)+8
-        directory(12,iat_min,iat_end-iat_min)
+        directory(12,*packed["iat_directory"])
         for i,s in enumerate(parts):
             at=392+i*40
             image[at:at+len(s["name"])]=s["name"].encode()
@@ -831,7 +783,7 @@ def new_image(output, import_names=None):
         base.write_bytes(image)
         entry_doc=dict(schema="llm-pe.module.v1",name="Entry",contract_version=1,
                        purpose="Exit-only native scaffold; replace with the requested application and real native test dispatch.",
-                       abi=dict(platform="Windows x64",inputs={},returns="Does not return; ExitProcess(0).",
+                       abi=dict(platform="Windows x64",inputs={},returns="Does not return; terminates through ExitProcess.",
                                 caller_shadow_bytes=32,nonvolatile_preserved=["RBX","RBP","RDI","RSI","R12","R13","R14","R15","XMM6..XMM15"],
                                 clobbers="Win64 volatile registers and flags",memory_contracts=[]),
                        implementation=dict(entry_rva=0x1000,implementation_rva=0x1000,used_bytes=len(code),slot_bytes=8192,
@@ -865,6 +817,224 @@ def new_image(output, import_names=None):
         if root.exists() and not any(root.iterdir()):root.rmdir()
 
 
+
+def import_inventory(pe, declared=None):
+    rva, size = pe.directories[1]
+    if not rva or not size or size % 20:
+        fail("Invalid import directory")
+    desc = pe.read(pe.offset(rva, size), size)
+    result = []
+    for pos in range(0, size, 20):
+        lookup, timestamp, forward, name, iat = struct.unpack_from("<5I", desc, pos)
+        if not any((lookup, timestamp, forward, name, iat)):
+            return result
+        if not lookup or not iat:
+            fail("This profile requires an explicit ILT and IAT")
+        dll = read_cstring(pe, name, 256)
+        if (not re.fullmatch(r"[A-Za-z0-9_.-]+\.dll", dll, re.I)
+                or declared is not None and dll.casefold() not in {value.casefold() for value in declared}):
+            fail("DLL is invalid or absent from declared imports: " + dll)
+        functions = []
+        for index in range(4096):
+            value = struct.unpack("<Q", pe.read(pe.offset(lookup+index*8, 8), 8))[0]
+            iat_value = struct.unpack("<Q", pe.read(pe.offset(iat+index*8, 8), 8))[0]
+            if value != iat_value:
+                fail("On-disk IAT/ILT mismatch, including terminators")
+            if not value:
+                break
+            row = dict(iat_rva=iat+index*8)
+            if value >> 63:
+                if value & 0x7fffffffffff0000:
+                    fail("Reserved ordinal-thunk bits are set")
+                row["ordinal"] = value & 0xffff
+            else:
+                pe.read(pe.offset(value, 2), 2)
+                api = read_cstring(pe, value+2, 256)
+                if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", api):
+                    fail("Malformed named import: " + repr(api))
+                row["name"] = api
+            functions.append(row)
+        else:
+            fail("Unterminated import lookup")
+        result.append(dict(dll=dll, functions=functions))
+    fail("Unterminated import descriptors")
+
+def resolve_system_imports(entries):
+    if os.name != "nt":
+        fail("Export resolution requires Windows; structural import inspection is portable")
+    import ctypes
+    kernel = ctypes.WinDLL("kernel32.dll", winmode=0x800)
+    address = kernel.GetProcAddress
+    address.argtypes, address.restype = [ctypes.c_void_p, ctypes.c_char_p], ctypes.c_void_p
+    # System32 search only; never load a DLL from the executable's directory.
+    for entry in entries:
+        try:
+            library = ctypes.WinDLL(entry["dll"], winmode=0x800)
+        except OSError as exc:
+            fail("Cannot load declared system DLL " + entry["dll"] + ": " + str(exc))
+        for row in entry["functions"]:
+            name = row.get("name")
+            argument = name.encode("ascii") if name else ctypes.cast(ctypes.c_void_p(row["ordinal"]), ctypes.c_char_p)
+            if not address(library._handle, argument):
+                fail("Unresolved system import: " + entry["dll"] + ":" + str(name or row["ordinal"]))
+
+def imports_view(path, resolve=False):
+    with PE(path, metadata=False) as pe:
+        entries = import_inventory(pe)
+        if resolve:
+            resolve_system_imports(entries)
+        result = dict(imports=entries, system_exports_resolved=bool(resolve),
+                      read_stats=dict(bytes_read=pe.bytes_read, executable_bytes=pe.size))
+    print(json.dumps(result, indent=2))
+    return result
+
+def module_view(pe, name, with_bytes=False):
+    rec = pe.record(name)
+    doc = pe.document(rec)
+    result = dict(module=doc, revision=dict(code_sha256=rec["code_hash"].hex(),
+                  document_sha256=rec["doc_hash"].hex(), abi_digest=rec["abi_hash"].hex(),
+                  generation=rec["generation"]),
+                  storage=dict(code_slot_bytes=rec["slot"], code_free_bytes=rec["slot"]-rec["used"],
+                    document_capacity_bytes=rec["doc_capacity"],
+                    document_free_bytes=rec["doc_capacity"]-rec["doc_size"]-1))
+    if with_bytes and rec["kind"] == 1:
+        result["code_hex"] = pe.code(rec).hex()
+    return result
+
+def context_view(path, name, include=(), contracts=True, max_bytes=32768, output=None):
+    if max_bytes <= 0:
+        fail("Context byte budget must be positive")
+    with PE(path) as pe:
+        target = module_view(pe, name, True)
+        doc = target["module"]
+        contract_names = doc.get("abi", {}).get("memory_contracts", [])
+        available = {rec["name"] for rec in pe.records}
+        selected = list(dict.fromkeys(([value for value in contract_names if value in available] if contracts else []) + list(include)))
+        selected = [value for value in selected if value != name]
+        included = [module_view(pe, value) for value in selected]
+        result = dict(schema="llm-pe.context.v1", target=target, included=included,
+                      available_dependencies=doc.get("dependencies", {}),
+                      missing_contract_documents=[value for value in contract_names if value not in available],
+                      read_stats=dict(bytes_read=pe.bytes_read, executable_bytes=pe.size),
+                      context_utf8_bytes=0)
+    # Count the actual compact JSON, not code bytes or an invented token estimate.
+    for _ in range(8):
+        payload = (json.dumps(result, sort_keys=True, separators=(",", ":"), ensure_ascii=True)+"\n").encode()
+        if result["context_utf8_bytes"] == len(payload):
+            break
+        result["context_utf8_bytes"] = len(payload)
+    if len(payload) > max_bytes:
+        fail("Context requires "+str(len(payload))+" bytes; budget is "+str(max_bytes)+
+             ". Narrow --include/use --no-contracts, or explicitly increase --max-bytes.")
+    if output:
+        destination = Path(output)
+        if destination.exists():
+            fail("Context output exists; choose a new path")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(payload)
+        print(json.dumps(dict(output=str(destination), context_utf8_bytes=len(payload), read_stats=result["read_stats"])))
+    else:
+        print(payload.decode(), end="")
+    return result
+
+
+
+def analyze_function(pe, name, capstone, listing=False):
+    from capstone.x86_const import X86_OP_IMM, X86_OP_MEM, X86_REG_RIP, X86_INS_JMP
+    rec = pe.record(name)
+    if rec["kind"] != 1:
+        fail("Static analysis targets function modules")
+    doc, code = pe.document(rec), pe.code(rec)
+    engine = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64)
+    engine.detail = True
+    instructions = list(engine.disasm(code, rec["impl"]))
+    starts = {item.address-rec["impl"]:item for item in instructions}
+    refs = {ref["offset"]:ref for ref in doc.get("references", [])}
+    errors, edges, checked = [], {}, set()
+    if sum(item.size for item in instructions) != len(code):
+        errors.append("Used body is not completely decodable as a linear x64 instruction stream")
+    for insn in instructions:
+        offset, end = insn.address-rec["impl"], insn.address-rec["impl"]+insn.size
+        next_edges = []
+        branch = insn.group(capstone.CS_GRP_JUMP)
+        call = insn.group(capstone.CS_GRP_CALL)
+        direct = bool(insn.operands and insn.operands[0].type == X86_OP_IMM and (branch or call))
+        rip = next((op for op in insn.operands if op.type == X86_OP_MEM and op.mem.base == X86_REG_RIP), None)
+        field = None
+        target = None
+        if direct:
+            field = offset+insn.imm_offset
+            target = insn.operands[0].imm
+            expected_kind = "call" if call else "branch"
+            if insn.imm_size != 4:
+                errors.append("Relative control field is not a declared rel32 at "+hex(offset))
+        elif rip:
+            field = offset+insn.disp_offset
+            target = insn.address+insn.size+rip.mem.disp
+            expected_kind = "import" if call else "rip"
+            if insn.disp_size != 4:
+                errors.append("RIP-relative field is not 32 bits at "+hex(offset))
+        if field is not None:
+            ref = refs.get(field)
+            if ref is None:
+                errors.append("Undeclared relative instruction at "+hex(offset))
+            else:
+                checked.add(field)
+                if ref["next_offset"] != end or ref["kind"] != expected_kind or ref["rva"] != target:
+                    errors.append("Decoded instruction disagrees with declared field/end/kind/target at "+hex(offset))
+        if direct and rec["impl"] <= target < rec["impl"]+len(code):
+            destination = target-rec["impl"]
+            if destination not in starts:
+                errors.append("Control transfer enters the middle of an instruction at "+hex(offset))
+            if branch:
+                next_edges.append(destination)
+        terminal = insn.group(capstone.CS_GRP_RET) or insn.group(capstone.CS_GRP_IRET)
+        if not terminal and not (branch and insn.id == X86_INS_JMP) and end < len(code):
+            next_edges.append(end)
+        edges[offset] = next_edges
+    for offset in refs.keys()-checked:
+        errors.append("Declared relative field has no matching decoded instruction: "+hex(offset))
+    for label, offset in doc.get("local_symbols", {}).items():
+        if offset != len(code) and offset not in starts:
+            errors.append("Named label is not an instruction boundary: "+label)
+    seen, pending = set(), [0]
+    while pending:
+        offset = pending.pop()
+        if offset in seen or offset not in starts:
+            continue
+        seen.add(offset)
+        pending.extend(edges[offset])
+    unreachable = sorted(starts.keys()-seen)
+    result = dict(module=name, valid=not errors, instruction_count=len(instructions),
+                  decoded_bytes=sum(item.size for item in instructions), relative_fields_checked=len(checked),
+                  errors=errors, unreachable_instruction_offsets=unreachable,
+                  limitations=["Linear code-body analysis; indirect transfers and call effects are not proven.",
+                               "Does not prove register preservation, memory safety or intended application behavior."])
+    if listing:
+        result["instructions"] = [dict(offset=item.address-rec["impl"], hex=item.bytes.hex(),
+            text=item.mnemonic+" "+item.op_str, successors=edges[item.address-rec["impl"]]) for item in instructions]
+    return result
+
+def audit_view(path, name, analyzer_path=None, listing=False):
+    if analyzer_path:
+        sys.path.insert(0, str(Path(analyzer_path).resolve()))
+    try:
+        import capstone
+    except ImportError:
+        fail("Optional audit needs Capstone 5.x in the tool environment or --analyzer-path. "
+             "Nothing is installed automatically; inspect/verify/context remain standard-library only.")
+    if not capstone.__version__.startswith("5."):
+        fail("This optional adapter was validated with Capstone 5.x")
+    with PE(path) as pe:
+        result = analyze_function(pe, name, capstone, listing)
+        result["read_stats"] = dict(bytes_read=pe.bytes_read, executable_bytes=pe.size)
+        result["analyzer"] = "Capstone "+capstone.__version__
+    print(json.dumps(result, indent=2))
+    if not result["valid"]:
+        fail("Static instruction/reference analysis failed")
+    return result
+
+
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     sub=p.add_subparsers(dest="command",required=True)
@@ -872,6 +1042,12 @@ def main():
     q=sub.add_parser("migrate");q.add_argument("spec");q.add_argument("--output")
     q=sub.add_parser("inspect");q.add_argument("exe");q.add_argument("module",nargs="?");q.add_argument("--bytes",action="store_true")
     q=sub.add_parser("verify");q.add_argument("exe")
+    q=sub.add_parser("context");q.add_argument("exe");q.add_argument("module")
+    q.add_argument("--include",action="append",default=[]);q.add_argument("--no-contracts",action="store_true")
+    q.add_argument("--max-bytes",type=int,default=32768);q.add_argument("--output")
+    q=sub.add_parser("imports");q.add_argument("exe");q.add_argument("--resolve",action="store_true")
+    q=sub.add_parser("audit");q.add_argument("exe");q.add_argument("module")
+    q.add_argument("--analyzer-path");q.add_argument("--listing",action="store_true")
     q=sub.add_parser("patch-template");q.add_argument("exe");q.add_argument("module");q.add_argument("--output",required=True)
     q=sub.add_parser("patch");q.add_argument("exe");q.add_argument("patch");q.add_argument("--output",required=True);q.add_argument("--relocate",action="store_true")
     q=sub.add_parser("diff");q.add_argument("before");q.add_argument("after")
@@ -882,6 +1058,9 @@ def main():
     elif a.command=="migrate":migrate(a.spec,a.output)
     elif a.command=="inspect":inspect(a.exe,a.module,a.bytes)
     elif a.command=="verify":verify(a.exe)
+    elif a.command=="context":context_view(a.exe,a.module,a.include,not a.no_contracts,a.max_bytes,a.output)
+    elif a.command=="imports":imports_view(a.exe,a.resolve)
+    elif a.command=="audit":audit_view(a.exe,a.module,a.analyzer_path,a.listing)
     elif a.command=="patch-template":template(a.exe,a.module,a.output)
     elif a.command=="patch":patch(a.exe,a.patch,a.output,a.relocate)
     elif a.command=="diff":print(json.dumps(binary_diff(a.before,a.after),indent=2))

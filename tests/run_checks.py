@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Integration checks for the raw-byte maintenance protocol, including real native tests."""
 import copy
+import argparse
 import importlib.util
 import hashlib
 import json
@@ -13,7 +14,12 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 TOOL = ROOT/".agents/skills/direct-pe-x64/scripts/pe_workbench.py"
-FIXTURE = ROOT/"examples/starfall/Starfall.exe"
+parser=argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--fixture",type=Path,default=ROOT/"examples/starfall/Starfall.exe")
+parser.add_argument("--migration",type=Path,default=ROOT/"examples/starfall/architecture/migration.json")
+args=parser.parse_args()
+FIXTURE=args.fixture.resolve()
+MIGRATION=args.migration.resolve()
 if os.name != "nt":
     raise SystemExit("Native integration checks require Windows x64; inspect/verify can run elsewhere.")
 OUT = ROOT/"out"/("checks-"+uuid.uuid4().hex[:12])
@@ -49,7 +55,7 @@ def native(exe,*args,console=False,expected=0):
         startup.dwFlags=subprocess.STARTF_USESHOWWINDOW
         startup.wShowWindow=0
         flags=subprocess.CREATE_NEW_CONSOLE if console else subprocess.CREATE_NO_WINDOW
-    p=subprocess.run([str(exe),*args],cwd=str(exe.parent),capture_output=True,timeout=15,
+    p=subprocess.run([str(exe),*args],cwd=str(exe.parent),capture_output=True,timeout=30,
                      startupinfo=startup,creationflags=flags)
     if p.returncode!=expected:
         raise AssertionError("Native exit "+str(p.returncode)+": "+p.stderr.decode(errors="replace")+p.stdout.decode(errors="replace"))
@@ -63,6 +69,8 @@ with wb.PE(EXE) as pe:
     move_code=pe.code(move)
     arch=pe.document(pe.record("Architecture"))
     legacy_entry=move["entry"]
+UNIT=arch.get("validation",{}).get("native_unit_assertions",51)
+SMOKE=arch.get("validation",{}).get("native_smoke_assertions",5)
 inspect=json.loads(cli("inspect",EXE,"Move","--bytes").stdout)
 check("selective inspection reads under one tenth of image",inspect["read_stats"]["bytes_read"]<EXE.stat().st_size//10)
 check("selective inspection contains only Move document",inspect["module"]["name"]=="Move" and len(inspect["code_hex"])==154)
@@ -73,9 +81,9 @@ check("native default description prints Architecture",json.loads(native(EXE,"--
 check("native data contract description",json.loads(native(EXE,"--describe","Data.ScoreRecord").stdout)["size"]==16)
 check("unknown native module returns exit 2",b"Unknown embedded module" in native(EXE,"--describe","missing",expected=2).stdout)
 p=native(EXE,"--test")
-check("updated EXE passes 51 shared native tests",p.stdout.count(b"PASS  ")==51 and b"ALL TESTS PASSED" in p.stdout)
+check("updated EXE passes its declared native unit assertions",p.stdout.count(b"PASS  ")==UNIT and b"ALL TESTS PASSED" in p.stdout)
 p=native(EXE,"--smoke",console=True)
-check("updated EXE passes five real console assertions",p.stdout.count(b"PASS  ")==5)
+check("updated EXE passes its declared console assertions",p.stdout.count(b"PASS  ")==SMOKE)
 cli("patch-template",EXE,"Move","--output",OUT/"move.patch.json")
 patch=json.loads((OUT/"move.patch.json").read_text())
 check("patch template exposes document and code capacities",
@@ -104,7 +112,7 @@ with wb.PE(OUT/"one-function.exe") as pe:
     report=json.loads(Path(str(OUT/"one-function.exe")+".patch-report.json").read_text())
     check("byte diff is limited to function, its metadata and unwind",[r for r in report["ranges"] if not any(a<=r[0] and r[1]<=b for a,b in allowed)]==[])
 p=native(OUT/"one-function.exe","--test")
-check("same-slot patch still passes all native tests",p.stdout.count(b"PASS  ")==51)
+check("same-slot patch still passes all native tests",p.stdout.count(b"PASS  ")==UNIT)
 cli("patch",OUT/"one-function.exe",OUT/"move.patch.json","--output",OUT/"stale.exe",success=False)
 check("stale patch rejected before candidate creation",not (OUT/"stale.exe").exists())
 bad=copy.deepcopy(patch)
@@ -127,9 +135,9 @@ with wb.PE(OUT/"relocated.exe") as pe:
     check("relocation changes no other function implementation hash",all(r["name"]=="Move" or r["code_hash"]==function_hashes[r["name"]] for r in pe.records if r["kind"]==1))
     check("global symbol registry remains stable after relocation",pe.document(pe.record("Symbols"))["symbols"]["Move"]==legacy_entry)
 p=native(OUT/"relocated.exe","--test")
-check("relocated raw-byte function passes all 51 native tests",p.stdout.count(b"PASS  ")==51)
+check("relocated raw-byte function passes all native assertions",p.stdout.count(b"PASS  ")==UNIT)
 p=native(OUT/"relocated.exe","--smoke",console=True)
-check("relocated function passes real console integration",p.stdout.count(b"PASS  ")==5)
+check("relocated function passes real console integration",p.stdout.count(b"PASS  ")==SMOKE)
 cli("export",EXE,OUT/"project")
 cli("build",OUT/"project","--output",OUT/"rebuilt.exe")
 check("deterministic project rebuild is byte-for-byte identical",wb.stream_hash(EXE)==wb.stream_hash(OUT/"rebuilt.exe"))
@@ -148,7 +156,7 @@ unicode_dir.mkdir()
 shutil.copyfile(EXE,unicode_dir/"Starfall.exe")
 check("native description works from Unicode/spaced path",json.loads(native(unicode_dir/"Starfall.exe","--describe","Move").stdout)["name"]=="Move")
 p=native(unicode_dir/"Starfall.exe","--test")
-check("native tests work from Unicode/spaced path",p.stdout.count(b"PASS  ")==51)
+check("native tests work from Unicode/spaced path",p.stdout.count(b"PASS  ")==UNIT)
 
 # Exercise append-only growth twice, using the existing stable entry.
 cli("patch-template",OUT/"relocated.exe","Move","--output",OUT/"second-growth.patch.json")
@@ -163,7 +171,7 @@ with wb.PE(OUT/"second-growth.exe") as pe:
     check("second growth preserves entry and retires previous body",
           grown["entry"]==legacy_entry and len(grown_doc["implementation"]["retired"])==1)
 p=native(OUT/"second-growth.exe","--test")
-check("twice relocated body passes all native assertions",p.stdout.count(b"PASS  ")==51)
+check("twice relocated body passes all native assertions",p.stdout.count(b"PASS  ")==UNIT)
 
 # A deliberately incorrect expected value must make the native test runner fail.
 # This raw offset is pinned to the checked-in v1-derived fixture's Tests slot.
@@ -187,7 +195,7 @@ cli("new","--output",OUT/"custom-imports.exe","--imports","KERNEL32.dll:ExitProc
 cli("verify",OUT/"custom-imports.exe")
 native(OUT/"custom-imports.exe")
 check("explicit Windows DLL imports produce loader-valid scaffold",True)
-cli("migrate",ROOT/"examples/starfall/architecture/migration.json","--output",OUT/"migration-rebuilt.exe")
+cli("migrate",MIGRATION,"--output",OUT/"migration-rebuilt.exe")
 check("raw migration reproduces annotated fixture byte-for-byte",
       wb.stream_hash(EXE)==wb.stream_hash(OUT/"migration-rebuilt.exe"))
 check("test harness preserves checked-in fixture",

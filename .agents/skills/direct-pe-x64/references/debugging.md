@@ -1,36 +1,33 @@
-# Debugging a direct-byte Windows application
+# Debug a direct-byte executable efficiently
 
-Work on a copy in an isolated folder. Record the command, exit status, stdout/log and candidate hash. Preserve the user's live binary, score and other state.
+Reproduce the reported failure through its actual entry/adapter path in an isolated environment. Record the smallest triggering input, observed result, expected result, command, exit status/log and artifact revision. Do not expand architecture before locating the failing boundary.
 
-## Locate the failure
+## Choose the failing layer
 
-A loader error happens before application tests:
-- error 193 often indicates an invalid image or wrong machine/format;
-- status 0xC0000135 indicates an unresolved DLL/load dependency;
-- access violation 0xC0000005 during execution needs instruction/reference/stack analysis.
+| Evidence | Inspect first |
+| --- | --- |
+| Image never reaches entry | PE headers, sections, import names/thunks, relocation and loader status |
+| Entry runs; operation faults | Selected body, pointer bounds, stack arguments, register widths and lifetimes |
+| Core tests pass; real operation fails | Actual adapter, callback/host contract, resource types and result/error handling |
+| One path is skipped or stale | Branch targets, named insertion policy, initialization and state transitions |
+| Patch corrupts a working path | Revision hashes, ABI/data changes, field/end rebasing and affected callers |
 
-These are clues, not unique diagnoses. Check headers, section adjacency, imports including embedded name/thunk RVAs, IAT fields and actual DLL/API availability. verify catches the toolkit profile's structural inconsistencies but does not diagnose every loader rule.
+Loader status is a clue, not a unique diagnosis. Use imports --resolve when exports changed. Use context for the failing function and only necessary contracts/dependencies; a whole image dump is rarely the shortest route to an answer.
 
-If --test runs, use its failed assertion and the module's embedded tests/dependencies to choose the next document. Check register widths, signed comparisons, instruction-end offsets, local branches, initialization and caller/callee contracts. Avoid inspecting every function by default.
+verify checks recorded structural invariants. Optional audit checks actual decoded instructions against references and boundaries. Neither proves intended behavior. If uncertain, examine the selected body with an allowed static analyzer/debugger; do not substitute a compiler/assembler implementation.
 
-If unit tests pass but --smoke fails, inspect console/API adapters and argument layout: the Win64 fifth and later arguments live above the shadow area. Confirm real handles, return values and cleanup. A hidden console smoke launch still requires an actual new console; redirected output alone is not a complete rendering test.
+## Test the path that failed
 
-## Reference evidence and regression targets
+A prewritten context or simulated request may bypass the faulty adapter. Test both the deterministic operation and the real path that reaches it. Use a host/resource of the correct type, check API return values, and distinguish owned from borrowed resources. Redirection, callbacks, encoding, partial I/O and host scheduling may differ from the harness's assumptions.
 
-Starfall's native --test runs 51 assertions over board state, movement bounds, collisions, acceleration/spawning, score records and persistence. --smoke creates a real console, performs 120 frames and checks five assertions. These test modes use their own score paths; the toolkit's integration harness copies the fixture into a fresh output directory.
+Use bounded deterministic timestamps/data where units matter. For adapter timing, compare actual observed time/results rather than inferring them from loop count. For reused mutable buffers, cover failure followed by a valid operation and reinitialize output fields according to their contract.
 
-The original build also verified that an intentionally incorrect assertion produces a failed log and exit 1. Do not accept a test runner that always returns success. Log both the assertion and expected/actual information useful to diagnose failures.
+Native assertions should call production slots, report expected and actual values with units, and fail with nonzero status. Establish that an intentionally incorrect assertion really fails. A scaffold exit or a logger that always reports success is not acceptance evidence.
 
-A real storage bug was fixed by ensuring score-save reconstructs the record signature after an invalid-load test had altered the shared buffer. Cover invalid signature/length/content followed by save and reload, rather than assuming a previous buffer remains valid. Score units and binary layout are documented by Data.ScoreRecord.
+A focused diagnostic mode or bounded trace can log a failing boundary's input, selected path, output/error and state revision. Add only what helps reproduce the observed defect; diagnostic code must not change production semantics. Applications without a console can write an appropriate log or return structured results.
 
-The maintenance harness additionally checks selective reads, native module descriptions, hash/ABI rejection, same-slot patch isolation, overflow gates, rebased relative fields, byte-identical checkpoint rebuilding, corruption detection and execution from paths containing spaces and Unicode.
+## Finish one candidate
 
-Native tests are implemented in the EXE, not simulated by the helper. The scaffold only exits and its metadata honestly says that test/smoke/describe are absent. For a new app, deterministic logic tests should share production function slots and accept an explicit seed or known state where useful; a bounded smoke mode covers actual Windows adapters.
+Fix bytes and metadata together, review the targeted diff, verify and rerun the failing regression. Broaden to relevant callers/adapters and required acceptance checks once the path works. Repeat passed checks only when new edits, failures or unresolved concerns justify them.
 
-## Review the fix
-
-Write a new candidate; verify its hashes/fixups/unwind and inspect the byte diff. Run the failed regression and applicable callers, then the existing native suite and relevant smoke mode. Add tests when they establish behavior, not when they merely duplicate the chosen bytes.
-
-If structural verification passes but behavior fails, declarations may be wrong. A SHA-256 and ABI description do not prove compliance. Inspect the actual bytes with a debugger/disassembler when needed for diagnosis; do not use an assembler/compiler to replace the user's direct-byte implementation constraint.
-
-Keep error logs and patch reports with the candidate evidence. Deliver only after required checks actually pass, or explicitly report the unresolved failure and preserve the artifacts for the next iteration.
+Keep failed logs for diagnosis and successful evidence associated with the candidate hash. Preserve user state and a running image. Deliver a verified new artifact or state the concrete unresolved failure; do not claim a metadata hash proves native semantics.

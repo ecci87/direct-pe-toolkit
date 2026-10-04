@@ -33,7 +33,7 @@ Kinds: function=1, data contract=2, architecture=3, stable symbols=4. Name restr
 
 Function documents describe purpose, ABI, implementation/unwind, dependencies, typed memory contracts, test coverage, local_symbols and references. Each reference records offset, next_offset, target symbol, resolved RVA, optional local body offset and kind. Symbols supplies stable external RVAs; local branch targets move with their body.
 
-Data contracts describe size, fields with offsets/types/units, ownership, read/write constraints and invariants. For new APIs, include a size/version header and pass a context pointer. The Starfall migration documents existing fixed globals without changing those legacy accesses.
+Data contracts describe size, fields with offsets/types/units, ownership, read/write constraints and invariants. For new APIs, include a size/version header and pass a context pointer. Document existing fixed globals without changing legacy accesses during an unrelated edit.
 
 ## Commands
 
@@ -51,7 +51,7 @@ export image.exe checkpoint-directory
 build checkpoint-directory --output rebuilt.exe
 ```
 
-inspect emits only the selected document/revision/body, or a compact module directory. Its storage fields expose document size/capacity/free bytes and code reserve; patch-template repeats capacity limits. Budget expanded documentation against canonical JSON length plus the NUL before patching. The native Starfall --describe MODULE command prints that same embedded JSON. Bare --describe prints Architecture; unknown names return exit 2. Generic scaffolds do not yet implement this native command.
+inspect emits only the selected document/revision/body, or a compact module directory. Its storage fields expose document size/capacity/free bytes and code reserve; patch-template repeats capacity limits. Budget expanded documentation against canonical JSON length plus the NUL before patching. An application implementing native --describe MODULE can print that same embedded JSON. Bare --describe prints Architecture; unknown names return exit 2. Generic scaffolds do not yet implement this native command.
 
 Patch JSON has schema llm-pe.patch.v1, module, expected_code_sha256, expected_document_sha256, contract_version, reason, hex and documentation. Start from a fresh patch-template. If instructions move, update local_symbols and every affected reference offset/next_offset/local target. The patcher resolves listed displacements and updates their rva fields. It rejects stale revisions, changed public ABI/contract versions and unsupported frame profiles.
 
@@ -61,7 +61,7 @@ Candidate creation copies the image and rewrites only the target slot, its docum
 
 Use --relocate only after reviewing a body that exceeds its reserved slot. The tool appends a 1024-aligned body in .mods and writes E9 rel32 at the existing public entry. Local branches and external relative references are recomputed. The body gets its own unwind range; the entry gate gets leaf unwind. Other function bodies/call sites retain their bytes and public target RVAs.
 
-Later relocations retain retired bodies and their unwind records. This avoids reusing old ranges while the profile remains append-only. Growth is finite: the reference has a 16 KiB .mods arena, 128 directory records, 384 KiB .llm, and 48 unwind entries. Per-module document capacities are independent. Exhaustion fails explicitly.
+Later relocations retain retired bodies and their unwind records. This avoids reusing old ranges while the profile remains append-only. Growth is finite. The schema has 128 directory records and the current helper has 48 unwind entries. Read each image's section headers and Architecture.reserve_profile for actual code/document capacities. Per-module document capacities are independent. Exhaustion fails explicitly.
 
 The current helper does not provide a universal add-module/import/data-layout migration. The migrate command handles a raw, unannotated base plus a reviewed specification, appending .mods/.llm; it is not a routine way to remigrate an already annotated image. Adapt the raw generator/layout for structural changes, version contracts, rebuild the candidate and verify all dependent accesses/callers. See the reference migration.json for explicit function bytes and contracts.
 
@@ -71,6 +71,6 @@ The new command builds an exit-only raw base and annotates it. Its context heade
 
 export produces layout.json, raw section .bin snapshots, readable module .json documents and used function .bin bodies. build reconstructs the same bytes and rejects edited views that disagree with raw sections. This is lossless archival/reproducibility, not a second source of truth that silently repairs edited files. Apply reviewed patches first and export a fresh checkpoint afterwards.
 
-verify checks the tested PE profile, section bounds/permissions, document/code/ABI hashes, declared fixup values, slot padding, import structures, stable gates and supported unwind ranges. It does not decode arbitrary instructions, prove register preservation, enforce memory effects, verify behavior or authenticate the binary. Behavioral assertions and byte review remain necessary.
+verify checks the tested PE profile, section bounds/permissions, document/code/ABI hashes, declared fixup values, slot padding, import structures, stable gates and supported unwind ranges. context provides a bounded edit packet; imports --resolve validates actual exports on Windows; optional audit checks decoded instructions against declarations. See byte-tools.md for their scope. It does not decode arbitrary instructions, prove register preservation, enforce memory effects, verify behavior or authenticate the binary. Behavioral assertions and byte review remain necessary.
 
 Future extensions should version the protocol: indexed call/data dependency queries, more unwind encodings, migration tools for new modules/imports, richer context contracts and an optional x64 decoder used only for verification. Keep those optional; the current repository has no downloaded runtime dependencies.

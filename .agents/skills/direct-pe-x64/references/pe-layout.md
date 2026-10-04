@@ -18,7 +18,7 @@ A terminated IMAGE_IMPORT_DESCRIPTOR table points to DLL names, ILT and IAT arra
 
 Moving .rdata requires updating EVERY embedded RVA in import descriptors and thunk/name records, not merely changing labels used by instructions. This was a real loader failure during the original build. An apparently valid API call cannot fix a stale import table.
 
-The original images use Windows DLL imports only: KERNEL32.dll and USER32.dll. The scaffold accepts explicit DLL:Function declarations; declare the Windows imports required by a new application and verify against that declaration.
+The scaffold accepts explicit Windows DLL:Function declarations. Choose the APIs required by the application; use the import packer rather than hand-built hint/terminator strings, and run imports --resolve on Windows before relying on a new export.
 
 Dynamic-base flags alone do not establish useful relocation coverage. The reference includes a real absolute image-base pointer with a DIR64 relocation entry; its relocation block and directory are encoded manually. Relative calls/data accesses use RIP-relative or rel32 fields. Absolute addresses introduced later need appropriate relocation records.
 
@@ -46,7 +46,7 @@ A relocated entry gate has a five-byte leaf unwind range; its body gets a separa
 
 Keep raw bytes and fixup manifests together. Canonical JSON uses sorted keys, UTF-8, ASCII escaping, indent 2 and a final LF. Prefer structured files to shell-built program text. On Windows, large command lines are limited; the original session wrote larger files in bounded chunks. That is an environment workaround, not a runtime dependency of the toolkit.
 
-A loader-valid stub only proves that the image loads and exits. Build and test actual application transitions, input handling, rendering and storage separately.
+A loader-valid stub only proves that the image loads and exits. Build and test actual application operations, host adapters and resource lifecycles separately.
 
 Primary references:
 - [Microsoft PE/COFF specification](https://learn.microsoft.com/en-us/windows/win32/debug/pe-format)

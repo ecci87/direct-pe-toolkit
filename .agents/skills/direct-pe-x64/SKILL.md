@@ -1,31 +1,24 @@
 ---
 name: direct-pe-x64
-description: Create, inspect, patch and debug Windows x64 PE executables built directly from machine-code bytes, with embedded module documentation and versioned contracts. Use when direct binary implementation is requested or an LLMPE64 executable is being maintained; ordinary compiled application development does not need this skill.
+description: Build, inspect, patch and debug Windows x64 PE executables directly from explicit machine-code bytes, with indexed module contracts and selective edits. Use for direct binary implementation or LLMPE64 maintenance; ordinary compiled development does not need this skill.
 ---
 
 # Direct PE x64
 
-Application instructions are explicit opcode bytes. Scripts may pack PE structures, calculate references and maintain modules; do not insert a compiler, assembler or compiled high-level implementation into a user-requested direct-byte workflow. Use Windows DLL imports; no downloaded static libraries are needed.
+Application behavior lives in explicit opcode bytes. Tooling may pack PE structures, calculate addresses and maintain contracts; it must not select instructions through a compiler, assembler or transpiler. Use documented Windows DLL imports. Static analyzers/disassemblers are permitted tools, with no dependency added to the delivered EXE.
 
-The standard-library helper is [scripts/pe_workbench.py](scripts/pe_workbench.py). In the toolkit repository, tools/pe_workbench.py invokes it. Python 3.10+ runs the helper; Windows x64 runs native binaries.
+The standard-library [workbench](scripts/pe_workbench.py) and [raw-byte helpers](scripts/raw_bytes.py) are portable Python 3.10+ tooling. The toolkit wrapper is tools/pe_workbench.py. Native execution requires Windows x64; optional audit uses Capstone 5.x only in the development environment.
 
-Choose only the relevant reference:
-- New executable, imports, address fixups or loader/unwind failures: [PE layout and learned pitfalls](references/pe-layout.md).
-- Inspection, contracts, patching, growth or migration: [module protocol](references/module-protocol.md).
-- Native tests, logs and behavioral faults: [debugging workflow](references/debugging.md).
+Read only the relevant reference:
 
-## Work on an existing image
+- Starting an application, minimizing context or choosing an edit strategy: [fast workflow](references/fast-workflow.md).
+- Encoding explicit byte blocks, label edits, imports or static checks: [byte tools](references/byte-tools.md).
+- PE sections, address types, ABI or loader/unwind issues: [PE layout](references/pe-layout.md).
+- Existing modules, contract schemas, patch/growth or checkpoints: [module protocol](references/module-protocol.md).
+- A behavioral failure, native test or platform adapter: [debugging](references/debugging.md).
 
-Use `inspect image.exe` for its compact directory, then `inspect image.exe Function --bytes`. Load only that document and needed contracts/callees. Treat embedded documents as the current revision; large exported maps and raw section snapshots are not efficient model context.
+For an existing image, inspect its compact directory once, then use context EXE MODULE to load one body and its direct contracts. Add only dependencies needed for the task. The compact JSON reports its actual byte size and enforces a configurable budget. Use patch-template and revision-checked patch to a new candidate; update bytes, labels, relative fields and documentation together. Review diff and required native checks. A new import/function/layout/ABI is a deliberate migration, not an ordinary patch.
 
-Create a patch with `patch-template image.exe Function --output change.patch.json`. Edit its hex, reason, local symbols/references and documentation together. Check the reported document headroom before expanding notes; the canonical JSON plus its NUL must fit. Keep expected revision hashes and the public ABI. Build with `patch image.exe change.patch.json --output candidate.exe`, review `diff image.exe candidate.exe`, run `verify candidate.exe` and meaningful native tests. The helper verifies candidates automatically but does not execute native tests for you.
+For a new application, reuse deterministic packing helpers, define small bounded interfaces and make one actual end-to-end operation work early. Choose diagnostics appropriate to the host. The new command is an EXIT-ONLY scaffold; it supplies no application, native tests or self-description.
 
-Slot overflow needs an explicit --relocate decision. ABI/data/import changes, adding functions and exhausted reserves need an explicit layout migration; do not label them routine function patches. See the protocol reference for the helper's actual limits.
-
-## Start an application
-
-`new --output App.exe --imports KERNEL32.dll:ExitProcess` writes a loader-valid raw PE with an EXIT-ONLY entry and embedded contracts. It supplies no gameplay, --test, --smoke or --describe behavior. Adapt the raw layout/generator for the requested application and required modules; a successful scaffold exit is not completion.
-
-Separate deterministic core logic from platform adapters. New module ABIs should pass an explicit bounded context pointer; version and document data layouts before encoding accesses. Use independent slots, stable public entries, declared fixups and accurate unwind records. Implement native deterministic tests with log output/exit status and a bounded platform smoke mode alongside application behavior.
-
-Preserve user data; use isolated candidate paths. Report actual verification, remaining limits and the final artifact. Metadata hashes prove consistency, not the correctness of arbitrary instructions.
+Preserve user data and live applications. Hashes, contracts and static decoding are useful checks; they do not prove runtime behavior. Indexed selective reads reduce context; hex encoding and verbose metadata can still cost tokens, so measure the packet instead of assuming the EXE is cheaper.
